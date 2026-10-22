@@ -323,3 +323,43 @@ test("blank task titles are refused instead of dropped", () => {
 	if (details.kind === "error") assertEq(details.code, "TITLE_REQUIRED");
 	else throw new Error("expected a blank-title refusal");
 });
+
+test("a create replayed after its pre receipt is valid, but a later receipt is not", () => {
+	const session = new FakeSession();
+	session.add(userEntry("u1"));
+	session.add(stateEvent("e1", "create", null, makeState()));
+	session.add(preEntry("pre-1"));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	assert(ledger.fromContext(new FakeContext(session) as never).fault !== null, "a later pre receipt is invalid");
+});
+
+test("a create that reuses a consumed receipt is invalid", () => {
+	const session = new FakeSession();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, makeState()));
+	session.add(stateEvent("e2", "dismiss_list", makeState(), makeState({ revision: 2, phase: "dismissed", holdReason: "gone" })));
+	session.add(stateEvent("e3", "create", null, makeState({ checklistId: "list-2", title: "Next" })));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	const view = ledger.fromContext(new FakeContext(session) as never);
+	assert(view.fault !== null, "a consumed receipt must not be replayed");
+	assert(String(view.fault).includes("consumed"));
+});
+
+test("a create with terminal or annotated initial tasks is invalid", () => {
+	const session = new FakeSession();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, makeState({
+		tasks: [{ taskId: "t1", title: "one", status: "done", note: "already" }],
+	})));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	const view = ledger.fromContext(new FakeContext(session) as never);
+	assert(view.fault !== null, "a create cannot start with done tasks");
+});
+
+test("a create with a hold reason is invalid", () => {
+	const session = new FakeSession();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, makeState({ holdReason: "why" })));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	assert(ledger.fromContext(new FakeContext(session) as never).fault !== null, "a create cannot start held");
+});

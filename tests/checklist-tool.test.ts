@@ -1,6 +1,7 @@
 import { Value } from "typebox/value";
 
 import { ChecklistContract } from "../src/checklist-contract.ts";
+import { ChecklistParameters } from "../src/checklist-parameters.ts";
 import { ChecklistTool } from "../src/checklist-tool.ts";
 import { PreChecklistTool } from "../src/pre-checklist-tool.ts";
 import { ReceiptLedger } from "../src/receipt-ledger.ts";
@@ -183,6 +184,13 @@ test("the registered create schema accepts ten tasks and rejects eleven", () => 
 	const eleven = [...ten, "k"];
 	assert(Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: ten }));
 	assert(!Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: eleven }));
+});
+
+test("an action name outside the declared set has no schema", () => {
+	const parameters = new ChecklistParameters();
+	assert(parameters.schemaFor("create") !== null, "a declared action must resolve");
+	assertEq(parameters.schemaFor("constructor"), null);
+	assertEq(parameters.schemaFor("toString"), null);
 });
 
 test("create without tasks or title is refused before any state exists", async () => {

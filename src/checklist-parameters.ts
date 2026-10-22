@@ -72,7 +72,7 @@ export class ChecklistParameters {
 	}
 
 	public schemaFor(action: string): TObject | null {
-		return this.actions[action as Action] ?? null;
+		return Object.hasOwn(this.actions, action) ? this.actions[action as Action] : null;
 	}
 
 	public invalid(schema: TObject, params: Record<string, unknown>): string | null {

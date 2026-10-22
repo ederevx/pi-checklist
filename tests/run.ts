@@ -25,6 +25,10 @@ try {
 
 import "./contract.test.ts";
 import "./receipt-ledger.test.ts";
+import "./pre-checklist.test.ts";
+import "./checklist-tool.test.ts";
+import "./checklist-gate.test.ts";
+import "./session-lifecycle.test.ts";
 
 await registry.runAll();
 cleanupScratch();

@@ -6,7 +6,7 @@ const contract = new ChecklistContract();
 test("contract catalogue names the tools, limits, and user authority", () => {
 	const text = contract.catalogue(null);
 	assertIncludes(text, "pre_checklist");
-	assertIncludes(text, "one to three");
+	assertIncludes(text, "one to ten");
 	assertIncludes(text, "action ack");
 	assertIncludes(text, "/checklist-hold");
 	assertIncludes(text, "compaction");

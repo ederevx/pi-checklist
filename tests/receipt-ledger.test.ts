@@ -52,13 +52,13 @@ test("a second create is refused while the list is open", () => {
 	else throw new Error("expected a refusal");
 });
 
-test("create refuses zero or four tasks", () => {
+test("create refuses zero or eleven tasks", () => {
 	const { ledger, ctx } = setup();
 	const empty = create(ledger, ctx, []);
-	const four = create(ledger, ctx, ["a", "b", "c", "d"]);
-	if (empty.kind !== "error" || four.kind !== "error") throw new Error("expected task-limit refusals");
+	const eleven = create(ledger, ctx, ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]);
+	if (empty.kind !== "error" || eleven.kind !== "error") throw new Error("expected task-limit refusals");
 	assertEq(empty.code, "TASK_LIMIT");
-	assertEq(four.code, "TASK_LIMIT");
+	assertEq(eleven.code, "TASK_LIMIT");
 });
 
 test("add appends one pending task and advances the revision", () => {
@@ -76,12 +76,13 @@ test("add appends one pending task and advances the revision", () => {
 	assertEq(next.revision, 2);
 });
 
-test("a fourth task is refused", () => {
+test("an eleventh task is refused", () => {
 	const { ledger, ctx } = setup();
-	create(ledger, ctx, ["a", "b", "c"]);
+	const titles = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+	create(ledger, ctx, titles);
 	const state = ledger.fromContext(ctx as never).state as ChecklistState;
 	const result = ledger.transition(
-		{ kind: "add", checklistId: state.checklistId, revision: state.revision, title: "d", actor: "model" },
+		{ kind: "add", checklistId: state.checklistId, revision: state.revision, title: "k", actor: "model" },
 		ctx as never,
 	);
 	if (result.details.kind === "error") assertEq(result.details.code, "TASK_LIMIT");

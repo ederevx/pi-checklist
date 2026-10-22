@@ -93,7 +93,7 @@ export class ChecklistTool {
 				"Manage the branch's task checklist. create (title, tasks[1-3]), add " +
 				"(checklistId, revision, title), update (checklistId, revision, taskId, " +
 				"status, note), ack (checklistId, revision, summary; sole tool call in its " +
-				"message), or list. A list holds at most three tasks. The run cannot " +
+				"message), or list. A list holds at most ten tasks. The run cannot " +
 				"settle while tasks are unfinished or the current revision is unacknowledged.",
 			parameters: Parameters,
 			exposure: "model-only",

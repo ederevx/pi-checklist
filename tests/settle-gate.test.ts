@@ -119,11 +119,12 @@ test("three continuations per anchor exhaust the budget", () => {
 	assert(String(result.entries[1].content).includes("limit reached"));
 });
 
-test("two continuations for one revision exhaust it even under the anchor cap", () => {
+test("five continuations for one revision exhaust it across anchors", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
-	session.add(settleEntry("s1", "u1", "list-1", 1, "continue"));
-	session.add(settleEntry("s2", "u1", "list-1", 1, "continue"));
+	for (let index = 1; index <= 3; index += 1) session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
+	for (let index = 4; index <= 5; index += 1) session.add(settleEntry(`s${index}`, "u2", "list-1", 1, "continue"));
+	session.add(userEntry("u3"));
 	const result = gate.decide(boundary() as never, ctx as never) as { continue?: boolean };
 	assertEq(result.continue, undefined);
 });
@@ -228,7 +229,7 @@ test("a second user anchor receives its own unresolved warning", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
 	ackPair(session.entries, "list-1", 1, 1);
-	for (let index = 1; index <= 2; index += 1) session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
+	for (let index = 1; index <= 3; index += 1) session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
 	const first = gate.decide(boundary() as never, ctx as never) as { entries: unknown[] };
 	const notice = first.entries[1] as { content: string; customType: string; display: boolean; details: unknown };
 	session.add({
@@ -241,7 +242,7 @@ test("a second user anchor receives its own unresolved warning", () => {
 	});
 	session.add(userEntry("u2"));
 	session.add(stateEvent("e2", "update", state(), state({ revision: 2, tasks: [{ taskId: "t1", title: "one", status: "in_progress", note: null }] })));
-	for (let index = 1; index <= 2; index += 1) session.add(settleEntry(`u2-${index}`, "u2", "list-1", 2, "continue"));
+	for (let index = 1; index <= 3; index += 1) session.add(settleEntry(`u2-${index}`, "u2", "list-1", 2, "continue"));
 	const second = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ display?: boolean; content?: string }> } | undefined;
 	assert(second !== undefined, "a new anchor should warn again");
 	assertEq(second.entries[1].display, true);

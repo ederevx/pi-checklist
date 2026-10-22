@@ -122,8 +122,8 @@ export class ReceiptLedger {
 		let continuationsForRevision = 0;
 		for (const entry of branch) {
 			const settle = this.settleEvent(entry);
-			if (!settle || settle.decision !== "continue" || settle.anchorId !== anchorId) continue;
-			continuationsForAnchor += 1;
+			if (!settle || settle.decision !== "continue") continue;
+			if (settle.anchorId === anchorId) continuationsForAnchor += 1;
 			if (state && settle.checklistId === state.checklistId && settle.revision === state.revision) {
 				continuationsForRevision += 1;
 			}

@@ -9,9 +9,9 @@
 
 export const CONTRACT_VERSION = 1;
 export const SCHEMA = 1;
-export const MAX_TASKS = 3;
+export const MAX_TASKS = 10;
 export const MAX_CONTINUATIONS_PER_ANCHOR = 3;
-export const MAX_CONTINUATIONS_PER_REVISION = 2;
+export const MAX_CONTINUATIONS_PER_REVISION = 5;
 
 export type TaskStatus = "pending" | "in_progress" | "done" | "dismissed";
 export type ChecklistPhase = "open" | "held" | "completed" | "dismissed";
@@ -194,8 +194,8 @@ export class ChecklistContract {
 			`pi-checklist contract v${CONTRACT_VERSION}.`,
 			"",
 			"Use a checklist whenever a task has multiple steps. Call pre_checklist at the",
-			"start of each new checklist, then create one list of one to three coherent",
-			"tasks. A list holds at most three task records in total; a fourth is rejected.",
+			"start of each new checklist, then create one list of one to ten coherent",
+			"tasks. A list holds at most ten task records in total; an eleventh is rejected.",
 			"",
 			"Mark a task done only with a completion note that names the evidence. At",
 			"the end of every task or turn,",
@@ -206,7 +206,7 @@ export class ChecklistContract {
 			"",
 			"The run cannot settle while the list is open with unfinished tasks or a",
 			"missing acknowledgement. pi continues the run with a reminder, up to three",
-			"times per user turn and twice per list revision; at that limit the list is",
+			"times per user turn and five times per list revision; at that limit the list is",
 			"reported unresolved and stays open for a later user turn. Only the user can",
 			"hold or dismiss a checklist, through /checklist-hold, /checklist-release,",
 			"and /checklist-dismiss. Never mark unfinished work done and never claim a",
@@ -224,7 +224,7 @@ export class ChecklistContract {
 	/** Prompt guidelines installed with the tools. */
 	guidelines(): string[] {
 		return [
-			"For any task with multiple steps, call pre_checklist at the start, create a checklist of at most three coherent tasks, and acknowledge the refreshed list at every task or turn end with checklist action ack as the only tool call in that message.",
+			"For any task with multiple steps, call pre_checklist at the start, create a checklist of at most ten coherent tasks, and acknowledge the refreshed list at every task or turn end with checklist action ack as the only tool call in that message.",
 			"Keep checklist task statuses current: done only with a completion note naming the evidence; never mark unfinished work done.",
 			"The run cannot settle while the list has unfinished tasks or lacks a current acknowledgement; finish the work and acknowledge it, or ask the user to /checklist-hold or /checklist-dismiss.",
 			"Checklist state lives in the session branch and survives compaction, reload, resume, and /tree navigation; when pi-consult is installed, acknowledge after the closing consultation result.",

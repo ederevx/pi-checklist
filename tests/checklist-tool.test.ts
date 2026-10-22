@@ -169,8 +169,65 @@ test("the registered create schema accepts ten tasks and rejects eleven", () => 
 	const { pi } = setup();
 	const definition = (pi as unknown as { tools: Map<string, { parameters: unknown }> }).tools.get("checklist");
 	assert(definition !== undefined, "checklist must be registered");
+	const parameters = definition.parameters as {
+		type?: string;
+		anyOf?: unknown;
+		oneOf?: unknown;
+		properties?: Record<string, { type?: string }>;
+	};
+	assertEq(parameters.type, "object");
+	assert(parameters.anyOf === undefined, "the schema must not be a root union");
+	assert(parameters.oneOf === undefined, "the schema must not be a root union");
+	assertEq(parameters.properties?.tasks?.type, "array");
 	const ten = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
 	const eleven = [...ten, "k"];
 	assert(Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: ten }));
 	assert(!Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: eleven }));
+});
+
+test("create without tasks or title is refused before any state exists", async () => {
+	const { pi, ctx } = setup();
+	const missingTasks = (await pi.tool("checklist", { action: "create", title: "Work" }, ctx)) as {
+		details: { kind: string; code?: string };
+	};
+	assertEq(missingTasks.details.kind, "error");
+	assertEq(missingTasks.details.code, "INVALID_ARGS");
+	const missingTitle = (await pi.tool("checklist", { action: "create", tasks: ["one"] }, ctx)) as {
+		details: { kind: string; code?: string };
+	};
+	assertEq(missingTitle.details.code, "INVALID_ARGS");
+	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { state: unknown };
+	}).details.state;
+	assertEq(state, null);
+});
+
+test("a stringified task array is refused as invalid arguments", async () => {
+	const { pi, ctx } = setup();
+	const result = (await pi.tool(
+		"checklist",
+		{ action: "create", title: "Work", tasks: '["one","two"]' },
+		ctx,
+	)) as { details: { kind: string; code?: string } };
+	assertEq(result.details.code, "INVALID_ARGS");
+});
+
+test("an action carrying another action's field is refused", async () => {
+	const { pi, ctx } = setup();
+	const result = (await pi.tool("checklist", { action: "list", title: "Work" }, ctx)) as {
+		details: { kind: string; code?: string };
+	};
+	assertEq(result.details.kind, "error");
+	assertEq(result.details.code, "INVALID_ARGS");
+});
+
+test("invalid arguments are refused before the receipt gate", async () => {
+	const session = new FakeSession();
+	const pi = new FakePi(session);
+	const ledger = new ReceiptLedger(pi as never);
+	new ChecklistTool(ledger, new ChecklistContract()).register(pi as never);
+	const result = (await pi.tool("checklist", { action: "create", title: "Work" }, new FakeContext(session))) as {
+		details: { code?: string };
+	};
+	assertEq(result.details.code, "INVALID_ARGS");
 });

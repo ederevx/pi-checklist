@@ -73,6 +73,7 @@ export class ReceiptLedger {
 			...drafts.map((draft, index) => this.draftEntry(draft, index)),
 		];
 		const preReceiptIds = this.preReceipts(sessionEntries);
+		const branchPreReceiptIds = this.preReceipts(branch);
 		const usedPreReceiptIds: string[] = [];
 		const events: StateEvent[] = [];
 		let state: ChecklistState | null = null;
@@ -90,7 +91,7 @@ export class ReceiptLedger {
 			}
 			const event = read.event;
 			if (!event) continue;
-			const issue = this.transitionIssue(state, event);
+			const issue = this.transitionIssue(state, event, branchPreReceiptIds);
 			if (issue) {
 				fault = issue;
 				break;
@@ -123,6 +124,7 @@ export class ReceiptLedger {
 
 		return {
 			acknowledged: preReceiptIds.length > 0,
+			branchPreReceiptIds,
 			state,
 			fault,
 			preReceiptIds,
@@ -296,16 +298,26 @@ export class ReceiptLedger {
 		};
 	}
 
-	private transitionIssue(previous: ChecklistState | null, event: StateEvent): string | null {
+	private transitionIssue(
+		previous: ChecklistState | null,
+		event: StateEvent,
+		branchPreReceiptIds: readonly string[],
+	): string | null {
 		const state = event.state;
-		if (previous === null) {
-			if (event.operation !== "create" || event.actor !== "model") return "first transition is not a model create";
+		if (event.operation === "create") {
+			if (event.actor !== "model") return "create transition is not model-authored";
 			if (event.previousRevision !== null || state.revision !== 1 || state.phase !== "open") {
 				return "malformed create transition";
 			}
+			if (previous && previous.phase !== "completed" && previous.phase !== "dismissed") {
+				return "create over a live checklist";
+			}
+			if (previous && previous.checklistId === state.checklistId) return "create reused a checklist identity";
 			if (!event.preReceiptId) return "create transition has no pre_checklist receipt";
+			if (!branchPreReceiptIds.includes(event.preReceiptId)) return "create uses a receipt from outside this branch";
 			return this.taskSetIssue(state, 1, MAX_TASKS);
 		}
+		if (previous === null) return "first transition is not a create";
 		if (state.checklistId !== previous.checklistId) return "checklist identity changed";
 		if (event.previousRevision !== previous.revision) return "transition revision does not match the previous state";
 		if (state.revision !== previous.revision + 1) return "transition revision does not advance by one";
@@ -361,8 +373,12 @@ export class ReceiptLedger {
 		}
 		if (event.operation === "dismiss_task") {
 			if (changed.length !== 1) return "task dismissal must change exactly one task";
-			const index = next.tasks.findIndex((task) => task.status === "dismissed");
-			if (index < 0 || previous.tasks[index].status === "dismissed") return "task dismissal is malformed";
+			const index = next.tasks.findIndex(
+				(task, position) => JSON.stringify(task) !== JSON.stringify(previous.tasks[position]),
+			);
+			if (index < 0) return "task dismissal changed no task";
+			if (previous.tasks[index].status === "dismissed") return "task was already dismissed";
+			if (next.tasks[index].status !== "dismissed" || !next.tasks[index].note) return "malformed task dismissal";
 			return null;
 		}
 		if (changed.length !== 0) return "transition changed tasks it does not own";
@@ -402,11 +418,16 @@ export class ReceiptLedger {
 			return this.nextFailure("ALREADY_OPEN", "A checklist is already open on this branch.");
 		}
 		if (!view.acknowledged) return this.nextFailure("PRE_REQUIRED", this.contract.ackDenial());
-		const titles = command.tasks.map((title) => title.trim()).filter(Boolean);
-		if (titles.length < 1 || titles.length > MAX_TASKS) {
-			return this.nextFailure("TASK_LIMIT", `A checklist needs one to ${MAX_TASKS} non-empty tasks.`);
+		if (command.tasks.length < 1 || command.tasks.length > MAX_TASKS) {
+			return this.nextFailure("TASK_LIMIT", `A checklist needs one to ${MAX_TASKS} tasks.`);
 		}
-		const preReceiptId = [...view.preReceiptIds].reverse().find((id) => !view.usedPreReceiptIds.includes(id));
+		const titles = command.tasks.map((title) => title.trim());
+		if (titles.some((title) => !title)) {
+			return this.nextFailure("TITLE_REQUIRED", "Every task needs a non-empty title.");
+		}
+		const preReceiptId = [...view.branchPreReceiptIds]
+			.reverse()
+			.find((id) => !view.usedPreReceiptIds.includes(id));
 		if (!preReceiptId) {
 			return this.nextFailure("PRE_REQUIRED", "Call pre_checklist again before starting this checklist.");
 		}
@@ -747,6 +768,7 @@ export class ReceiptLedger {
 			notices.push({
 				schema: SCHEMA,
 				kind: "notice",
+				anchorId: typeof details.anchorId === "string" ? details.anchorId : null,
 				checklistId: typeof details.checklistId === "string" ? details.checklistId : null,
 				revision: typeof details.revision === "number" ? details.revision : null,
 				reason: typeof details.reason === "string" ? details.reason : "unknown",

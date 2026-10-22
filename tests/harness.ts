@@ -291,7 +291,7 @@ export function stateEvent(
 		actor: operation === "complete" ? "gate" : operation === "create" || operation === "add" || operation === "update" ? "model" : "user",
 		previousRevision: previous ? previous.revision : null,
 		reason: null,
-		preReceiptId: operation === "create" ? "pre-1" : null,
+		preReceiptId: operation === "create" ? "pre-pre-1" : null,
 		ackReceiptEntryId: operation === "complete" ? "ack-1" : null,
 		state,
 		...extra,
@@ -348,6 +348,6 @@ export function boundary(
 		entries: options.entries ?? [],
 		continue: options.continue ?? false,
 		outcome,
-		context: { canContinue: options.canContinue ?? true },
+		context: { canContinue: options.canContinue ?? false },
 	};
 }

@@ -48,6 +48,7 @@ export class SessionLifecycle {
 				details: {
 					schema: SCHEMA,
 					kind: "notice",
+					anchorId: view.anchorId,
 					checklistId: view.state.checklistId,
 					revision: view.state.revision,
 					reason: "compaction",

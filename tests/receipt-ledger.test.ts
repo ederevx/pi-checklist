@@ -4,12 +4,14 @@ import {
 	FakeContext,
 	FakePi,
 	FakeSession,
+	ackPair,
 	assert,
 	assertEq,
 	makeState,
 	preEntry,
 	stateEvent,
 	test,
+	userEntry,
 } from "./harness.ts";
 
 function setup(withPre = true): { session: FakeSession; ledger: ReceiptLedger; ctx: FakeContext } {
@@ -250,4 +252,74 @@ test("a completion draft is only offered with a valid acknowledgement", () => {
 	const ledger = new ReceiptLedger(new FakePi(session) as never);
 	const view = ledger.fromContext(new FakeContext(session) as never);
 	assertEq(ledger.completionDraft(view), undefined, "no acknowledgement, no completion");
+});
+
+test("a completed list can be replaced by a fresh checklist", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx, ["one"]);
+	let state = ledger.fromContext(ctx as never).state as ChecklistState;
+	ledger.transition(
+		{ kind: "update", checklistId: state.checklistId, revision: state.revision, taskId: state.tasks[0].taskId, status: "done", note: "ok", actor: "model" },
+		ctx as never,
+	);
+	state = ledger.fromContext(ctx as never).state as ChecklistState;
+	ackPair(session.entries, state.checklistId, state.revision, 1);
+	const view = ledger.fromContext(ctx as never);
+	const completion = ledger.completionDraft(view);
+	assert(completion !== undefined, "expected a completion draft");
+	session.add({ type: "custom", id: "complete-1", customType: "pi-checklist-state", data: (completion.draft as { data: unknown }).data });
+	session.add(preEntry("pre-2"));
+	const second = create(ledger, ctx, ["next"]);
+	assert(second.kind === "mutation", "a completed predecessor should allow a new list");
+	const after = ledger.fromContext(ctx as never);
+	assertEq(after.fault, null);
+	assertEq(after.state?.phase, "open");
+	assertEq(after.state?.revision, 1);
+});
+
+test("a dismissed list can be replaced by a fresh checklist", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx, ["one"]);
+	ledger.transition({ kind: "dismissList", reason: "abandoned", actor: "user" }, ctx as never);
+	session.add(preEntry("pre-2"));
+	const second = create(ledger, ctx, ["next"]);
+	assert(second.kind === "mutation", "a dismissed predecessor should allow a new list");
+	assertEq(ledger.fromContext(ctx as never).fault, null);
+});
+
+test("sequential task dismissals keep reconstructing cleanly", () => {
+	const { ledger, ctx } = setup();
+	create(ledger, ctx, ["a", "b", "c"]);
+	let state = ledger.fromContext(ctx as never).state as ChecklistState;
+	ledger.transition({ kind: "dismissTask", taskId: state.tasks[0].taskId, reason: "one", actor: "user" }, ctx as never);
+	state = ledger.fromContext(ctx as never).state as ChecklistState;
+	assertEq(state.tasks[0].status, "dismissed");
+	ledger.transition({ kind: "dismissTask", taskId: state.tasks[1].taskId, reason: "two", actor: "user" }, ctx as never);
+	const after = ledger.fromContext(ctx as never);
+	assertEq(after.fault, null);
+	assertEq(after.state?.tasks[1].status, "dismissed");
+	assertEq(after.state?.tasks[0].status, "dismissed");
+});
+
+test("a sibling branch's pre receipt cannot start this branch's list", () => {
+	const session = new FakeSession();
+	const branchA = [userEntry("a1")];
+	const branchB = [preEntry("pre-b"), stateEvent("b1", "create", null, makeState({ checklistId: "list-b" }), { preReceiptId: "pre-pre-b" })];
+	session.setBranch(branchA, [...branchA, ...branchB]);
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	const ctx = new FakeContext(session);
+	assertEq(ledger.fromContext(ctx as never).acknowledged, true);
+	const refused = ledger.transition({ kind: "create", title: "Work", tasks: ["one"], actor: "model" }, ctx as never);
+	if (refused.details.kind === "error") assertEq(refused.details.code, "PRE_REQUIRED");
+	else throw new Error("expected a branch-local pre refusal");
+	session.add(preEntry("pre-a2"));
+	const created = ledger.transition({ kind: "create", title: "Work", tasks: ["one"], actor: "model" }, ctx as never);
+	assert(created.ok, "a branch-local receipt should permit creation");
+});
+
+test("blank task titles are refused instead of dropped", () => {
+	const { ledger, ctx } = setup();
+	const details = create(ledger, ctx, ["one", "   "]);
+	if (details.kind === "error") assertEq(details.code, "TITLE_REQUIRED");
+	else throw new Error("expected a blank-title refusal");
 });

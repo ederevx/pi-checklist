@@ -8,7 +8,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import type { ChecklistContract, ChecklistDetails } from "./checklist-contract.ts";
+import { ChecklistContract, SCHEMA, type ChecklistDetails } from "./checklist-contract.ts";
 import type { ReceiptLedger } from "./receipt-ledger.ts";
 
 export class ChecklistCommands {
@@ -88,5 +88,22 @@ export class ChecklistCommands {
 
 	private notify(ctx: ExtensionCommandContext, message: string, type: "info" | "error"): void {
 		if (ctx.hasUI) ctx.ui.notify(message, type);
+		const view = this.ledger.fromContext(ctx);
+		this.pi.sendMessage(
+			{
+				customType: ChecklistContract.NOTICE_TYPE,
+				content: message,
+				display: true,
+				details: {
+					schema: SCHEMA,
+					kind: "notice",
+					anchorId: view.anchorId,
+					checklistId: view.state?.checklistId ?? null,
+					revision: view.state?.revision ?? null,
+					reason: "command",
+				},
+			},
+			{ triggerTurn: false },
+		);
 	}
 }

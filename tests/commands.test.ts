@@ -11,12 +11,12 @@ import {
 	userEntry,
 } from "./harness.ts";
 
-function setup(): { pi: FakePi; ctx: FakeContext; session: FakeSession } {
+function setup(hasUI = true): { pi: FakePi; ctx: FakeContext; session: FakeSession } {
 	const session = new FakeSession();
 	session.add(userEntry("u1"), preEntry("pre-1"));
 	const pi = new FakePi(session);
 	new ChecklistExtension().register(pi as never);
-	return { pi, ctx: new FakeContext(session), session };
+	return { pi, ctx: new FakeContext(session, hasUI), session };
 }
 
 async function openList(pi: FakePi, ctx: FakeContext): Promise<string> {
@@ -72,9 +72,24 @@ test("dismissing an unknown task is refused", async () => {
 	assertIncludes(ctx.notifyCalls[0].message, "No task");
 });
 
-test("commands do not start a model turn", async () => {
+test("command output is persisted visibly without starting a model turn", async () => {
 	const { pi, ctx } = setup();
 	await openList(pi, ctx);
 	await pi.command("checklist-hold", "user", ctx);
-	assertEq(pi.messages.length, 0);
+	assert(pi.messages.length > 0, "expected a persisted notice");
+	for (const sent of pi.messages) {
+		const options = sent.options as { triggerTurn?: boolean };
+		assertEq(options.triggerTurn, false);
+		assertEq((sent.message as { display: boolean }).display, true);
+	}
+});
+
+test("command output persists without a UI", async () => {
+	const { pi, ctx } = setup(false);
+	await openList(pi, ctx);
+	await pi.command("checklist-hold", "user", ctx);
+	assert(pi.messages.length > 0, "expected a persisted command notice");
+	assertEq(ctx.notifyCalls.length, 0);
+	await pi.command("checklist-dismiss", "bad", ctx);
+	assert(pi.messages.length > 1, "expected an error notice too");
 });

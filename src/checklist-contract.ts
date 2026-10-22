@@ -124,6 +124,7 @@ export type ChecklistDetails =
 export interface NoticeDetails {
 	schema: typeof SCHEMA;
 	kind: "notice";
+	anchorId: string | null;
 	checklistId: string | null;
 	revision: number | null;
 	reason: string;
@@ -165,6 +166,7 @@ export interface ChecklistView {
 	state: ChecklistState | null;
 	fault: string | null;
 	preReceiptIds: string[];
+	branchPreReceiptIds: string[];
 	usedPreReceiptIds: string[];
 	events: StateEvent[];
 	ack: Acknowledgement | null;
@@ -195,8 +197,8 @@ export class ChecklistContract {
 			"start of each new checklist, then create one list of one to three coherent",
 			"tasks. A list holds at most three task records in total; a fourth is rejected.",
 			"",
-			"Keep exactly one task in_progress at a time and mark a task done only with a",
-			"completion note that names the evidence. At the end of every task or turn,",
+			"Mark a task done only with a completion note that names the evidence. At",
+			"the end of every task or turn,",
 			"review the results and acknowledge the refreshed list: call checklist with",
 			"action ack as the only tool call in its assistant message. Several completed",
 			"tasks may share one acknowledgement, but work performed after an",
@@ -223,7 +225,7 @@ export class ChecklistContract {
 	guidelines(): string[] {
 		return [
 			"For any task with multiple steps, call pre_checklist at the start, create a checklist of at most three coherent tasks, and acknowledge the refreshed list at every task or turn end with checklist action ack as the only tool call in that message.",
-			"Keep checklist task statuses current: one in_progress task, done only with a completion note naming the evidence; never mark unfinished work done.",
+			"Keep checklist task statuses current: done only with a completion note naming the evidence; never mark unfinished work done.",
 			"The run cannot settle while the list has unfinished tasks or lacks a current acknowledgement; finish the work and acknowledge it, or ask the user to /checklist-hold or /checklist-dismiss.",
 			"Checklist state lives in the session branch and survives compaction, reload, resume, and /tree navigation; when pi-consult is installed, acknowledge after the closing consultation result.",
 		];

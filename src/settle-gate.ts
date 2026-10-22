@@ -65,9 +65,6 @@ export class SettleGate {
 		// Another extension already owns a continuation for this boundary; do not
 		// charge this checklist and let the next boundary decide.
 		if (event.continue) return undefined;
-		if (event.context.canContinue === false) {
-			return this.unresolved(event, view, state, "cannot_continue");
-		}
 		const overBudget =
 			view.continuationsForAnchor >= MAX_CONTINUATIONS_PER_ANCHOR ||
 			view.continuationsForRevision >= MAX_CONTINUATIONS_PER_REVISION;
@@ -110,8 +107,9 @@ export class SettleGate {
 	): BoundaryResult | undefined {
 		const duplicate = view.notices.some(
 			(notice) =>
-				notice.checklistId === state?.checklistId &&
-				notice.revision === state?.revision &&
+				notice.anchorId === view.anchorId &&
+				notice.checklistId === (state?.checklistId ?? null) &&
+				notice.revision === (state?.revision ?? null) &&
 				notice.reason === reason,
 		);
 		if (duplicate) return undefined;

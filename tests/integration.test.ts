@@ -131,3 +131,31 @@ test("pi-consult's implementation gate sees these tools as ordinary callables", 
 	const names = [...pi.tools.keys()].sort();
 	assertEq(names.join(","), "checklist,pre_checklist");
 });
+
+test("the checklist gate composes with a consultant-style implementation gate", async () => {
+	for (const order of ["checklist-first", "consult-first"]) {
+		const session = new FakeSession();
+		const pi = new FakePi(session);
+		let consulted = false;
+		const consultGate = (event: { toolName?: string }) => {
+			if (event.toolName === "pre_consult") {
+				consulted = true;
+				return undefined;
+			}
+			return consulted ? undefined : { block: true, reason: "pre_consult required" };
+		};
+		if (order === "consult-first") pi.on("tool_call", consultGate);
+		new ChecklistExtension().register(pi as never);
+		if (order === "checklist-first") pi.on("tool_call", consultGate);
+		const ctx = new FakeContext(session);
+		const blocked = (await pi.fire("tool_call", { type: "tool_call", toolName: "pre_checklist", toolCallId: "c1", input: {} }, ctx)).some(
+			(result) => (result as { block?: boolean } | undefined)?.block === true,
+		);
+		assert(blocked, `${order}: pre_checklist must wait for pre_consult`);
+		await pi.fire("tool_call", { type: "tool_call", toolName: "pre_consult", toolCallId: "c2", input: {} }, ctx);
+		const allowed = (await pi.fire("tool_call", { type: "tool_call", toolName: "pre_checklist", toolCallId: "c3", input: {} }, ctx)).every(
+			(result) => (result as { block?: boolean } | undefined)?.block !== true,
+		);
+		assert(allowed, `${order}: pre_checklist must pass after pre_consult`);
+	}
+});

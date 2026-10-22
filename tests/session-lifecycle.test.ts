@@ -52,3 +52,17 @@ test("/tree rebuilds from the selected branch", async () => {
 	await ctx.sessionManager.getBranch();
 	assertEq(ctx.sessionManager.getBranch().length, 3);
 });
+
+test("/tree switches to the selected branch's list", async () => {
+	const { pi, ctx, session } = setup();
+	const branchA = [userEntry("a1"), preEntry("pre-a"), stateEvent("a2", "create", null, makeState({ checklistId: "list-a" }), { preReceiptId: "pre-pre-a" })];
+	const branchB = [userEntry("b1"), preEntry("pre-b"), stateEvent("b2", "create", null, makeState({ checklistId: "list-b" }), { preReceiptId: "pre-pre-b" })];
+	session.setBranch(branchA, [...branchA, ...branchB]);
+	await pi.fire("session_tree", { type: "session_tree" }, ctx);
+	await pi.command("checklist", "", ctx);
+	assertIncludes(pi.messages[0].message.content as string, "list-a");
+	session.setBranch(branchB, [...branchA, ...branchB]);
+	await pi.fire("session_tree", { type: "session_tree" }, ctx);
+	await pi.command("checklist", "", ctx);
+	assertIncludes(pi.messages[1].message.content as string, "list-b");
+});

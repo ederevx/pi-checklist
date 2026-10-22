@@ -137,15 +137,15 @@ test("a new user anchor resets the continuation budget", () => {
 	assertEq(result.continue, true);
 });
 
-test("cannot-continue reports unresolved immediately", () => {
+test("a final-assistant boundary continues by appending a runnable reminder", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
 	const result = gate.decide(boundary("completed", { canContinue: false }) as never, ctx as never) as {
 		continue?: boolean;
-		entries: Array<{ display?: boolean }>;
+		entries: Array<{ display?: boolean; type?: string }>;
 	};
-	assertEq(result.continue, undefined);
-	assertEq(result.entries[1].display, true);
+	assertEq(result.continue, true);
+	assertEq(result.entries[1].type, "custom_message");
 });
 
 test("a duplicate unresolved notice is not appended again", () => {
@@ -155,7 +155,14 @@ test("a duplicate unresolved notice is not appended again", () => {
 		session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
 	}
 	const first = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ details?: { reason: string } }> };
-	const notice = first.entries[1] as { type: string; customType: string; content: string; display: boolean; details: unknown };
+	const notice = first.entries[1] as {
+		type: string;
+		customType: string;
+		content: string;
+		display: boolean;
+		details: Record<string, unknown>;
+	};
+	notice.details = { ...notice.details, anchorId: "u1" };
 	session.add({
 		type: "custom_message",
 		id: "notice-1",
@@ -188,4 +195,49 @@ test("earlier boundary drafts are preserved", () => {
 	};
 	assertEq(result.entries[0].customType, "other");
 	assertEq(result.entries.length, 3);
+});
+
+test("the per-anchor cap is enforced across revisions", () => {
+	const { session, gate, ctx, ledger } = setup();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	ledger.transition({ kind: "create", title: "Work", tasks: ["one"], actor: "model" }, ctx as never);
+	let state = ledger.fromContext(ctx as never).state as ChecklistState;
+	ledger.transition(
+		{ kind: "update", checklistId: state.checklistId, revision: state.revision, taskId: state.tasks[0].taskId, status: "in_progress", actor: "model" },
+		ctx as never,
+	);
+	state = ledger.fromContext(ctx as never).state as ChecklistState;
+	ledger.transition(
+		{ kind: "update", checklistId: state.checklistId, revision: state.revision, taskId: state.tasks[0].taskId, status: "pending", actor: "model" },
+		ctx as never,
+	);
+	const current = ledger.fromContext(ctx as never).state as ChecklistState;
+	assertEq(current.revision, 3);
+	session.add(
+		settleEntry("s1", "u1", current.checklistId, 1, "continue"),
+		settleEntry("s2", "u1", current.checklistId, 2, "continue"),
+		settleEntry("s3", "u1", current.checklistId, 3, "continue"),
+	);
+	const result = gate.decide(boundary() as never, ctx as never) as { continue?: boolean };
+	assertEq(result.continue, undefined);
+});
+
+test("a second user anchor receives its own unresolved warning", () => {
+	const { session, gate, ctx } = setup();
+	open(session);
+	ackPair(session.entries, "list-1", 1, 1);
+	for (let index = 1; index <= 2; index += 1) session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
+	const first = gate.decide(boundary() as never, ctx as never) as { entries: unknown[] };
+	const notice = (first.entries[1] as { content: string }).content;
+	session.add({
+		type: "custom_message",
+		id: "notice-1",
+		customType: "pi-checklist-notice",
+		content: notice,
+		display: true,
+		details: { schema: 1, kind: "notice", anchorId: "u1", checklistId: "list-1", revision: 1, reason: "attempt_cap" },
+	});
+	session.add(userEntry("u2"));
+	const second = gate.decide(boundary() as never, ctx as never) as { entries: unknown[] } | undefined;
+	assert(second !== undefined, "a new anchor should warn again");
 });

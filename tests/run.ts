@@ -24,11 +24,15 @@ try {
 }
 
 import "./contract.test.ts";
-import "./receipt-ledger.test.ts";
 import "./pre-checklist.test.ts";
+import "./receipt-ledger.test.ts";
 import "./checklist-tool.test.ts";
 import "./checklist-gate.test.ts";
+import "./acknowledgement.test.ts";
+import "./settle-gate.test.ts";
+import "./commands.test.ts";
 import "./session-lifecycle.test.ts";
+import "./integration.test.ts";
 
 await registry.runAll();
 cleanupScratch();

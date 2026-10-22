@@ -39,12 +39,12 @@ test("list works before the catalogue acknowledgement", async () => {
 	assertEq(result.details.acknowledged, false);
 });
 
-test("create returns the new list and rejects a fourth task", async () => {
+test("create returns the new list and rejects an eleventh task", async () => {
 	const { pi, ctx } = setup();
 	const created = (await pi.tool("checklist", {
 		action: "create",
 		title: "Work",
-		tasks: ["one", "two", "three"],
+		tasks: ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
 	}, ctx)) as { details: { kind: string; revision: number }; content: Array<{ text: string }> };
 	assertEq(created.details.kind, "mutation");
 	assertEq(created.details.revision, 1);
@@ -57,7 +57,7 @@ test("create returns the new list and rejects a fourth task", async () => {
 		action: "add",
 		checklistId: list.checklistId,
 		revision: list.revision,
-		title: "four",
+		title: "eleven",
 	}, ctx)) as { details: { kind: string; code?: string } };
 	assertEq(add.details.kind, "error");
 	assertEq(add.details.code, "TASK_LIMIT");

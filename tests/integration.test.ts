@@ -83,7 +83,7 @@ test("an unfinished activity cannot outrun the continuation budget", async () =>
 			entries: unknown[];
 			continue?: boolean;
 		};
-		if (attempt < 2) assertEq(result.continue, true);
+		if (attempt < 3) assertEq(result.continue, true);
 		else assertEq(result?.continue, undefined);
 		appendDrafts(session, result?.entries ?? []);
 	}

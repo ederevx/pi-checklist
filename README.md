@@ -2,7 +2,7 @@
 
 Branch-persistent task checklists for the [pi](https://pi.dev) coding agent, with
 bounded settlement enforcement. A multi-step activity is kept on a list of at
-most three tasks; the agent acknowledges the refreshed list at every task or
+most ten tasks; the agent acknowledges the refreshed list at every task or
 turn end, and the run cannot settle while work remains or the current revision
 is unacknowledged. Only the user can hold or dismiss a list.
 
@@ -12,7 +12,7 @@ The state lives in the session branch, so compaction, reload, resume, and
 ## Install
 
 ```bash
-pi install git:github.com/ederevx/pi-checklist@v0.1.2
+pi install git:github.com/ederevx/pi-checklist@v0.2.0
 ```
 
 The package has no runtime dependencies; it uses the host-provided
@@ -22,7 +22,7 @@ The package has no runtime dependencies; it uses the host-provided
 
 1. `pre_checklist` once at the start of each new checklist. It returns the
    contract and records the session acknowledgement.
-2. `checklist` with action `create` — a title and one to three task titles.
+2. `checklist` with action `create` — a title and one to ten task titles.
 3. Work through the tasks with `update` (`pending`, `in_progress`, `done`).
    Marking a task done requires a completion note naming the evidence.
 4. After reviewing the results, call `checklist` with action `ack` as the only
@@ -71,7 +71,7 @@ delivered consultation result counts as later work; acknowledge after it.
 
 At `agent_before_settle`, an open list with unfinished tasks or a missing
 acknowledgement appends a hidden reminder and requests one more model turn.
-The budget is three continuations per user turn and two per list revision. At
+The budget is three continuations per user turn and five per list revision. At
 the limit the list is reported unresolved and stays open for a later user turn.
 Aborts and errors never consume the budget, and a hold or dismissal waives
 settlement enforcement immediately.

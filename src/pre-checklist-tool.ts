@@ -34,7 +34,7 @@ export class PreChecklistTool {
 			label: "pre_checklist",
 			description:
 				"Call at the start of every new checklist. Returns the pi-checklist " +
-				"contract: one list of at most three coherent tasks, an acknowledgement " +
+				"contract: one list of at most ten coherent tasks, an acknowledgement " +
 				"at every task or turn end, and a run that cannot settle while tasks are " +
 				"unfinished or unacknowledged. Only the user can hold or dismiss the list.",
 			promptGuidelines: this.contract.guidelines(),

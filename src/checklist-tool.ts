@@ -14,11 +14,8 @@ import type {
 	ExtensionAPI,
 	ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
-
 import {
 	ChecklistContract,
-	MAX_TASKS,
 	SCHEMA,
 	type AckDetails,
 	type ChecklistDetails,
@@ -27,59 +24,13 @@ import {
 	type MutationDetails,
 	type ViewDetails,
 } from "./checklist-contract.ts";
+import { ChecklistParameters } from "./checklist-parameters.ts";
 import type { ReceiptLedger, TransitionCommand } from "./receipt-ledger.ts";
-
-const Parameters = Type.Union([
-	Type.Object(
-		{
-			action: Type.Literal("create"),
-			title: Type.String({ minLength: 1, maxLength: 200 }),
-			tasks: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
-				minItems: 1,
-				maxItems: MAX_TASKS,
-			}),
-		},
-		{ additionalProperties: false },
-	),
-	Type.Object(
-		{
-			action: Type.Literal("add"),
-			checklistId: Type.String({ minLength: 1, maxLength: 100 }),
-			revision: Type.Integer({ minimum: 1 }),
-			title: Type.String({ minLength: 1, maxLength: 200 }),
-		},
-		{ additionalProperties: false },
-	),
-	Type.Object(
-		{
-			action: Type.Literal("update"),
-			checklistId: Type.String({ minLength: 1, maxLength: 100 }),
-			revision: Type.Integer({ minimum: 1 }),
-			taskId: Type.String({ minLength: 1, maxLength: 100 }),
-			status: Type.Union([
-				Type.Literal("pending"),
-				Type.Literal("in_progress"),
-				Type.Literal("done"),
-			]),
-			note: Type.Optional(Type.String({ minLength: 1, maxLength: 2000 })),
-		},
-		{ additionalProperties: false },
-	),
-	Type.Object(
-		{
-			action: Type.Literal("ack"),
-			checklistId: Type.String({ minLength: 1, maxLength: 100 }),
-			revision: Type.Integer({ minimum: 1 }),
-			summary: Type.String({ minLength: 1, maxLength: 2000 }),
-		},
-		{ additionalProperties: false },
-	),
-	Type.Object({ action: Type.Literal("list") }, { additionalProperties: false }),
-]);
 
 export class ChecklistTool {
 	private readonly ledger: ReceiptLedger;
 	private readonly contract: ChecklistContract;
+	private readonly parameters = new ChecklistParameters();
 
 	constructor(ledger: ReceiptLedger, contract: ChecklistContract) {
 		this.ledger = ledger;
@@ -91,12 +42,13 @@ export class ChecklistTool {
 			name: "checklist",
 			label: "checklist",
 			description:
-				"Manage the branch's task checklist. create (title, tasks[1-10]), add " +
-				"(checklistId, revision, title), update (checklistId, revision, taskId, " +
-				"status, note), ack (checklistId, revision, summary; sole tool call in its " +
-				"message), or list. A list holds at most ten tasks. The run cannot " +
-				"settle while tasks are unfinished or the current revision is unacknowledged.",
-			parameters: Parameters,
+				"Manage the branch's task checklist. Each action takes only its own fields. " +
+				"create: title, tasks[1-10]. add: checklistId, revision, title. update: " +
+				"checklistId, revision, taskId, status, note. ack: checklistId, revision, " +
+				"summary; sole tool call in its message. list: no other field. A list holds " +
+				"at most ten tasks. The run cannot settle while tasks are unfinished or the " +
+				"current revision is unacknowledged.",
+			parameters: this.parameters.schema,
 			exposure: "model-only",
 			executionMode: "sequential",
 			execute: async (
@@ -110,6 +62,10 @@ export class ChecklistTool {
 					return this.error("NESTED_CALL", "checklist cannot be called through another tool.");
 				}
 				const action = String(params.action ?? "");
+				const schema = this.parameters.schemaFor(action);
+				if (!schema) return this.error("UNKNOWN_ACTION", `Unknown action: ${action}`);
+				const invalid = this.parameters.invalid(schema, params);
+				if (invalid) return this.error("INVALID_ARGS", invalid);
 				const view = this.ledger.fromContext(ctx);
 				if (action === "list") {
 					const needsAck = view.state !== null &&

@@ -1,0 +1,51 @@
+{
+  "name": "pi-checklist",
+  "version": "0.1.0",
+  "description": "Branch-persistent task checklists and bounded settlement enforcement for pi.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Edrick Sinsuan <evcsinsuan@gmail.com>",
+  "homepage": "https://github.com/ederevx/pi-checklist#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ederevx/pi-checklist.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ederevx/pi-checklist/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "checklist",
+    "tasks"
+  ],
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --experimental-transform-types tests/run.ts"
+  }
+}

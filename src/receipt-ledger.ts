@@ -75,6 +75,7 @@ export class ReceiptLedger {
 		const preReceiptIds = this.preReceipts(sessionEntries);
 		const branchPreReceiptIds = this.preReceipts(branch);
 		const usedPreReceiptIds: string[] = [];
+		const precedingPreReceiptIds: string[] = [];
 		const events: StateEvent[] = [];
 		let state: ChecklistState | null = null;
 		let fault: string | null = null;
@@ -82,7 +83,13 @@ export class ReceiptLedger {
 
 		for (let index = 0; index < branch.length; index += 1) {
 			const entry = branch[index];
-			if (entry.type !== "custom" || entry.customType !== ChecklistContract.STATE_TYPE) continue;
+			if (entry.type !== "custom" || entry.customType !== ChecklistContract.STATE_TYPE) {
+				const receiptId = this.preReceiptId(entry);
+				if (receiptId && !precedingPreReceiptIds.includes(receiptId)) {
+					precedingPreReceiptIds.push(receiptId);
+				}
+				continue;
+			}
 			if (fault !== null) break;
 			const read = this.stateEvent(entry);
 			if (read.fault) {
@@ -91,7 +98,7 @@ export class ReceiptLedger {
 			}
 			const event = read.event;
 			if (!event) continue;
-			const issue = this.transitionIssue(state, event, branchPreReceiptIds);
+			const issue = this.transitionIssue(state, event, precedingPreReceiptIds, usedPreReceiptIds);
 			if (issue) {
 				fault = issue;
 				break;
@@ -301,7 +308,8 @@ export class ReceiptLedger {
 	private transitionIssue(
 		previous: ChecklistState | null,
 		event: StateEvent,
-		branchPreReceiptIds: readonly string[],
+		precedingPreReceiptIds: readonly string[],
+		usedPreReceiptIds: readonly string[],
 	): string | null {
 		const state = event.state;
 		if (event.operation === "create") {
@@ -314,7 +322,14 @@ export class ReceiptLedger {
 			}
 			if (previous && previous.checklistId === state.checklistId) return "create reused a checklist identity";
 			if (!event.preReceiptId) return "create transition has no pre_checklist receipt";
-			if (!branchPreReceiptIds.includes(event.preReceiptId)) return "create uses a receipt from outside this branch";
+			if (!precedingPreReceiptIds.includes(event.preReceiptId)) {
+				return "create uses a receipt that is absent or later on this branch";
+			}
+			if (usedPreReceiptIds.includes(event.preReceiptId)) return "create reused a consumed receipt";
+			if (state.holdReason !== null) return "create starts with a hold reason";
+			if (state.tasks.some((task) => task.status !== "pending" || task.note !== null)) {
+				return "create starts with terminal or annotated tasks";
+			}
 			return this.taskSetIssue(state, 1, MAX_TASKS);
 		}
 		if (previous === null) return "first transition is not a create";
@@ -613,21 +628,26 @@ export class ReceiptLedger {
 	private preReceipts(entries: readonly BranchEntry[]): string[] {
 		const ids: string[] = [];
 		for (const entry of entries) {
-			if (!this.isToolResult(entry) || entry.message?.toolName !== "pre_checklist" || entry.message.isError) {
-				continue;
-			}
-			const details = this.record(entry.message.details);
-			if (
-				details?.schema === SCHEMA &&
-				details.kind === "pre" &&
-				details.contractVersion === CONTRACT_VERSION &&
-				typeof details.receiptId === "string" &&
-				!ids.includes(details.receiptId)
-			) {
-				ids.push(details.receiptId);
-			}
+			const receiptId = this.preReceiptId(entry);
+			if (receiptId && !ids.includes(receiptId)) ids.push(receiptId);
 		}
 		return ids;
+	}
+
+	private preReceiptId(entry: BranchEntry): string | undefined {
+		if (!this.isToolResult(entry) || entry.message?.toolName !== "pre_checklist" || entry.message.isError) {
+			return undefined;
+		}
+		const details = this.record(entry.message.details);
+		if (
+			details?.schema === SCHEMA &&
+			details.kind === "pre" &&
+			details.contractVersion === CONTRACT_VERSION &&
+			typeof details.receiptId === "string"
+		) {
+			return details.receiptId;
+		}
+		return undefined;
 	}
 
 	private acknowledgements(

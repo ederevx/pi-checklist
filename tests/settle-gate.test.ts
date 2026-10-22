@@ -75,7 +75,8 @@ test("an unfinished list requests one continuation with a hidden notice", () => 
 
 test("finished tasks without an acknowledgement continue for the acknowledgement", () => {
 	const { session, gate, ctx } = setup();
-	open(session, { tasks: [{ taskId: "t1", title: "one", status: "done", note: "ok" }] });
+	open(session);
+	session.add(stateEvent("e2", "update", state(), state({ revision: 2, tasks: [{ taskId: "t1", title: "one", status: "done", note: "ok" }] })));
 	const result = gate.decide(boundary() as never, ctx as never) as { continue: boolean; entries: Array<{ content?: string }> };
 	assertEq(result.continue, true);
 	assert(String(result.entries[1].content).includes("Acknowledgement: missing"));
@@ -83,8 +84,9 @@ test("finished tasks without an acknowledgement continue for the acknowledgement
 
 test("a finished and acknowledged list completes without continuing", () => {
 	const { session, gate, ctx } = setup();
-	open(session, { tasks: [{ taskId: "t1", title: "one", status: "done", note: "ok" }] });
-	ackPair(session.entries, "list-1", 1, 1);
+	open(session);
+	session.add(stateEvent("e2", "update", state(), state({ revision: 2, tasks: [{ taskId: "t1", title: "one", status: "done", note: "ok" }] })));
+	ackPair(session.entries, "list-1", 2, 1);
 	const result = gate.decide(boundary() as never, ctx as never) as {
 		continue?: boolean;
 		entries: Array<{ type: string; customType?: string; data?: { operation: string; state: ChecklistState } }>;
@@ -93,7 +95,7 @@ test("a finished and acknowledged list completes without continuing", () => {
 	assertEq(result.entries[0].customType, "pi-checklist-state");
 	assertEq(result.entries[0].data?.operation, "complete");
 	assertEq(result.entries[0].data?.state.phase, "completed");
-	assertEq(result.entries[0].data?.state.revision, 2);
+	assertEq(result.entries[0].data?.state.revision, 3);
 });
 
 test("another extension's continuation is not charged or duplicated", () => {
@@ -162,7 +164,7 @@ test("a duplicate unresolved notice is not appended again", () => {
 		display: boolean;
 		details: Record<string, unknown>;
 	};
-	notice.details = { ...notice.details, anchorId: "u1" };
+	assertEq(notice.details.anchorId, "u1");
 	session.add({
 		type: "custom_message",
 		id: "notice-1",
@@ -228,16 +230,32 @@ test("a second user anchor receives its own unresolved warning", () => {
 	ackPair(session.entries, "list-1", 1, 1);
 	for (let index = 1; index <= 2; index += 1) session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
 	const first = gate.decide(boundary() as never, ctx as never) as { entries: unknown[] };
-	const notice = (first.entries[1] as { content: string }).content;
+	const notice = first.entries[1] as { content: string; customType: string; display: boolean; details: unknown };
 	session.add({
 		type: "custom_message",
 		id: "notice-1",
-		customType: "pi-checklist-notice",
-		content: notice,
-		display: true,
-		details: { schema: 1, kind: "notice", anchorId: "u1", checklistId: "list-1", revision: 1, reason: "attempt_cap" },
+		customType: notice.customType,
+		content: notice.content,
+		display: notice.display,
+		details: notice.details,
 	});
 	session.add(userEntry("u2"));
-	const second = gate.decide(boundary() as never, ctx as never) as { entries: unknown[] } | undefined;
+	session.add(stateEvent("e2", "update", state(), state({ revision: 2, tasks: [{ taskId: "t1", title: "one", status: "in_progress", note: null }] })));
+	for (let index = 1; index <= 2; index += 1) session.add(settleEntry(`u2-${index}`, "u2", "list-1", 2, "continue"));
+	const second = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ display?: boolean; content?: string }> } | undefined;
 	assert(second !== undefined, "a new anchor should warn again");
+	assertEq(second.entries[1].display, true);
+	assert(String(second.entries[1].content).includes("limit reached"));
+});
+
+test("a null-state fault deduplicates under the same anchor", () => {
+	const { session, gate, ctx } = setup();
+	session.add(userEntry("u1"));
+	session.add({ type: "custom", id: "bad", customType: "pi-checklist-state", data: { schema: 99 } });
+	const first = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ display?: boolean; details?: { anchorId?: string } }> };
+	assertEq(first.entries[0].display, true);
+	assertEq(first.entries[0].details?.anchorId, "u1");
+	const notice = first.entries[0] as { content: string; customType: string; display: boolean; details: unknown };
+	session.add({ type: "custom_message", id: "fault-notice", customType: notice.customType, content: notice.content, display: notice.display, details: notice.details });
+	assertEq(gate.decide(boundary() as never, ctx as never), undefined);
 });

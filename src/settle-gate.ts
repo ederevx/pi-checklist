@@ -88,6 +88,7 @@ export class SettleGate {
 			details: {
 				schema: SCHEMA,
 				kind: "notice",
+				anchorId: view.anchorId,
 				checklistId: state.checklistId,
 				revision: state.revision,
 				reason,
@@ -130,6 +131,7 @@ export class SettleGate {
 			details: {
 				schema: SCHEMA,
 				kind: "notice",
+				anchorId: view.anchorId,
 				checklistId: state?.checklistId ?? null,
 				revision: state?.revision ?? null,
 				reason,

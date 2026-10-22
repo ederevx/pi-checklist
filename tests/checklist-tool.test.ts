@@ -1,3 +1,5 @@
+import { Value } from "typebox/value";
+
 import { ChecklistContract } from "../src/checklist-contract.ts";
 import { ChecklistTool } from "../src/checklist-tool.ts";
 import { PreChecklistTool } from "../src/pre-checklist-tool.ts";
@@ -161,4 +163,14 @@ test("nested checklist calls are refused", async () => {
 		details: { code?: string };
 	};
 	assertEq(result.details.code, "NESTED_CALL");
+});
+
+test("the registered create schema accepts ten tasks and rejects eleven", () => {
+	const { pi } = setup();
+	const definition = (pi as unknown as { tools: Map<string, { parameters: unknown }> }).tools.get("checklist");
+	assert(definition !== undefined, "checklist must be registered");
+	const ten = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+	const eleven = [...ten, "k"];
+	assert(Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: ten }));
+	assert(!Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: eleven }));
 });

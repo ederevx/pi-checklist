@@ -18,6 +18,7 @@ import { Type } from "typebox";
 
 import {
 	ChecklistContract,
+	MAX_TASKS,
 	SCHEMA,
 	type AckDetails,
 	type ChecklistDetails,
@@ -35,7 +36,7 @@ const Parameters = Type.Union([
 			title: Type.String({ minLength: 1, maxLength: 200 }),
 			tasks: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
 				minItems: 1,
-				maxItems: 3,
+				maxItems: MAX_TASKS,
 			}),
 		},
 		{ additionalProperties: false },
@@ -90,7 +91,7 @@ export class ChecklistTool {
 			name: "checklist",
 			label: "checklist",
 			description:
-				"Manage the branch's task checklist. create (title, tasks[1-3]), add " +
+				"Manage the branch's task checklist. create (title, tasks[1-10]), add " +
 				"(checklistId, revision, title), update (checklistId, revision, taskId, " +
 				"status, note), ack (checklistId, revision, summary; sole tool call in its " +
 				"message), or list. A list holds at most ten tasks. The run cannot " +

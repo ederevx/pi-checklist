@@ -7,6 +7,7 @@ import {
 	ackPair,
 	assert,
 	assertEq,
+	assertIncludes,
 	makeState,
 	preEntry,
 	stateEvent,
@@ -154,14 +155,40 @@ test("stale revisions and unknown tasks are refused", () => {
 		{ kind: "add", checklistId: state.checklistId, revision: 99, title: "x", actor: "model" },
 		ctx as never,
 	);
-	if (stale.details.kind === "error") assertEq(stale.details.code, "STALE_REVISION");
-	else throw new Error("expected stale refusal");
+	if (stale.details.kind === "error") {
+		assertEq(stale.details.code, "STALE_REVISION");
+		assertIncludes(stale.details.message, "is at revision 1, not 99");
+	} else throw new Error("expected stale refusal");
 	const unknown = ledger.transition(
 		{ kind: "update", checklistId: state.checklistId, revision: 1, taskId: "nope", status: "pending", actor: "model" },
 		ctx as never,
 	);
 	if (unknown.details.kind === "error") assertEq(unknown.details.code, "UNKNOWN_TASK");
 	else throw new Error("expected unknown-task refusal");
+});
+
+test("a mismatched checklist id names both ids", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	const state = ledger.fromContext(ctx as never).state as ChecklistState;
+	const before = session.entries.length;
+	const received = `"${state.checklistId}"`;
+	const result = ledger.transition(
+		{
+			kind: "update",
+			checklistId: received,
+			revision: state.revision,
+			taskId: state.tasks[0].taskId,
+			status: "in_progress",
+			actor: "model",
+		},
+		ctx as never,
+	);
+	if (result.details.kind !== "error") throw new Error("expected unknown-checklist refusal");
+	assertEq(result.details.code, "UNKNOWN_CHECKLIST");
+	assertIncludes(result.details.message, JSON.stringify(received));
+	assertIncludes(result.details.message, `${JSON.stringify(state.checklistId)} revision ${state.revision}`);
+	assertEq(session.entries.length, before);
 });
 
 test("hold blocks model mutations until the user releases it", () => {

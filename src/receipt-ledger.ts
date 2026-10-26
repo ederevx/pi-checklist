@@ -174,13 +174,9 @@ export class ReceiptLedger {
 		const view = this.view(ctx.sessionManager.getEntries() as unknown as BranchEntry[], branch);
 		if (!view.acknowledged) return this.failure("PRE_REQUIRED", this.contract.ackDenial());
 		if (!view.state) return this.failure("NO_CHECKLIST", "No checklist is open on this branch.");
-		if (view.state.checklistId !== checklistId || view.state.revision !== revision) {
-			return this.failure(
-				"STALE_REVISION",
-				`Expected ${view.state.checklistId} revision ${view.state.revision}.`,
-				view.state.checklistId,
-				view.state.revision,
-			);
+		const reference = this.referenceIssue(view.state, checklistId, revision);
+		if (reference) {
+			return this.failure(reference.code, reference.message, view.state.checklistId, view.state.revision);
 		}
 		if (view.state.phase !== "open" && view.state.phase !== "held") {
 			return this.failure("NOT_OPEN", `Checklist is ${view.state.phase}.`, checklistId, revision);
@@ -418,12 +414,8 @@ export class ReceiptLedger {
 		if (command.kind === "dismissTask") return this.dismissTask(command, state);
 		if (command.kind === "dismissList") return this.dismissList(command, state);
 		if (state.phase !== "open") return this.nextFailure("NOT_OPEN", `Checklist is ${state.phase}.`);
-		if (state.checklistId !== command.checklistId || state.revision !== command.revision) {
-			return this.nextFailure(
-				"STALE_REVISION",
-				`Expected ${state.checklistId} revision ${state.revision}.`,
-			);
-		}
+		const reference = this.referenceIssue(state, command.checklistId, command.revision);
+		if (reference) return this.nextFailure(reference.code, reference.message);
 		if (command.kind === "add") return this.add(command, state);
 		return this.update(command, state);
 	}
@@ -588,6 +580,26 @@ export class ReceiptLedger {
 			},
 			state: event.state,
 		};
+	}
+
+	private referenceIssue(
+		state: ChecklistState,
+		checklistId: string,
+		revision: number,
+	): { code: string; message: string } | null {
+		if (state.checklistId !== checklistId) {
+			return {
+				code: "UNKNOWN_CHECKLIST",
+				message: `No checklist ${JSON.stringify(checklistId)} on this branch; the current checklist is ${JSON.stringify(state.checklistId)} revision ${state.revision}.`,
+			};
+		}
+		if (state.revision !== revision) {
+			return {
+				code: "STALE_REVISION",
+				message: `Checklist ${state.checklistId} is at revision ${state.revision}, not ${revision}.`,
+			};
+		}
+		return null;
 	}
 
 	private nextFailure(code: string, message: string): NextTransition {

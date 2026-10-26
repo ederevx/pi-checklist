@@ -130,6 +130,26 @@ test("ack after the work succeeds as a sole call", async () => {
 	assertEq(result.isError, undefined);
 });
 
+test("an ack naming another checklist shows the id it received", async () => {
+	const { pi, ctx, session } = setup();
+	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { state: { checklistId: string; revision: number } };
+	}).details.state;
+	session.add(assistantEntry("a1", [{ id: "ack-call", name: "checklist" }]));
+	const received = `"${state.checklistId}"`;
+	const result = (await pi.tool(
+		"checklist",
+		{ action: "ack", checklistId: received, revision: state.revision, summary: "reviewed" },
+		ctx,
+		"ack-call",
+	)) as { content: { text: string }[]; details: { code?: string; checklistId?: string | null } };
+	assertEq(result.details.code, "UNKNOWN_CHECKLIST");
+	assertEq(result.details.checklistId, state.checklistId);
+	assertIncludes(result.content[0].text, JSON.stringify(received));
+	assertIncludes(result.content[0].text, "(UNKNOWN_CHECKLIST)");
+});
+
 test("create before pre_checklist is refused by the tool", async () => {
 	const session = new FakeSession();
 	const pi = new FakePi(session);

@@ -87,7 +87,7 @@ export class ChecklistTool {
 				if (view.fault) return this.error("STATE_FAULT", view.fault);
 				if (action === "ack") {
 					const result = this.ledger.acknowledge(
-						String(params.checklistId ?? ""),
+						this.identifier(params.checklistId),
 						Number(params.revision ?? 0),
 						String(params.summary ?? ""),
 						toolCallId,
@@ -127,7 +127,7 @@ export class ChecklistTool {
 		if (action === "add") {
 			return {
 				kind: "add",
-				checklistId: String(params.checklistId ?? ""),
+				checklistId: this.identifier(params.checklistId),
 				revision: Number(params.revision ?? 0),
 				title: String(params.title ?? ""),
 				actor: "model",
@@ -136,15 +136,22 @@ export class ChecklistTool {
 		if (action === "update") {
 			return {
 				kind: "update",
-				checklistId: String(params.checklistId ?? ""),
+				checklistId: this.identifier(params.checklistId),
 				revision: Number(params.revision ?? 0),
-				taskId: String(params.taskId ?? ""),
+				taskId: this.identifier(params.taskId),
 				status: String(params.status ?? "pending") as "pending" | "in_progress" | "done",
 				note: typeof params.note === "string" ? params.note : undefined,
 				actor: "model",
 			};
 		}
 		return null;
+	}
+
+	/** An id as the model meant it; tool-call arguments can wrap it in one pair of quotes. */
+	private identifier(value: unknown): string {
+		const text = String(value ?? "").trim();
+		const quoted = text.length >= 2 && (text[0] === '"' || text[0] === "'") && text.at(-1) === text[0];
+		return quoted ? text.slice(1, -1) : text;
 	}
 
 	private describe(state: ChecklistState | null, ackValid: boolean, fault: string | null): string {

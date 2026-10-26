@@ -137,7 +137,7 @@ test("an ack naming another checklist shows the id it received", async () => {
 		details: { state: { checklistId: string; revision: number } };
 	}).details.state;
 	session.add(assistantEntry("a1", [{ id: "ack-call", name: "checklist" }]));
-	const received = `"${state.checklistId}"`;
+	const received = "other-checklist";
 	const result = (await pi.tool(
 		"checklist",
 		{ action: "ack", checklistId: received, revision: state.revision, summary: "reviewed" },
@@ -148,6 +148,58 @@ test("an ack naming another checklist shows the id it received", async () => {
 	assertEq(result.details.checklistId, state.checklistId);
 	assertIncludes(result.content[0].text, JSON.stringify(received));
 	assertIncludes(result.content[0].text, "(UNKNOWN_CHECKLIST)");
+});
+
+test("an ack with a quoted checklist id acknowledges the current list", async () => {
+	const { pi, ctx, session } = setup();
+	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { state: { checklistId: string; revision: number } };
+	}).details.state;
+	session.add(assistantEntry("a1", [{ id: "ack-call", name: "checklist" }]));
+	const mismatched = (await pi.tool(
+		"checklist",
+		{ action: "ack", checklistId: `"${state.checklistId}'`, revision: state.revision, summary: "reviewed" },
+		ctx,
+		"ack-call",
+	)) as { details: { code?: string } };
+	assertEq(mismatched.details.code, "UNKNOWN_CHECKLIST");
+	const result = (await pi.tool(
+		"checklist",
+		{ action: "ack", checklistId: ` "${state.checklistId}" `, revision: state.revision, summary: "reviewed" },
+		ctx,
+		"ack-call",
+	)) as { details: { kind: string; checklistId?: string }; isError?: boolean };
+	assertEq(result.details.kind, "ack");
+	assertEq(result.details.checklistId, state.checklistId);
+	assertEq(result.isError, undefined);
+});
+
+test("add and update accept quoted checklist and task ids", async () => {
+	const { pi, ctx } = setup();
+	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { state: { checklistId: string; revision: number; tasks: Array<{ taskId: string }> } };
+	}).details.state;
+	const updated = (await pi.tool("checklist", {
+		action: "update",
+		checklistId: `'${state.checklistId}'`,
+		revision: state.revision,
+		taskId: `"${state.tasks[0].taskId}"`,
+		status: "done",
+		note: "verified",
+	}, ctx)) as { details: { kind: string; checklistId: string; revision: number } };
+	assertEq(updated.details.kind, "mutation");
+	assertEq(updated.details.checklistId, state.checklistId);
+	assertEq(updated.details.revision, 2);
+	const added = (await pi.tool("checklist", {
+		action: "add",
+		checklistId: `"${state.checklistId}"`,
+		revision: 2,
+		title: "two",
+	}, ctx)) as { details: { kind: string; revision: number } };
+	assertEq(added.details.kind, "mutation");
+	assertEq(added.details.revision, 3);
 });
 
 test("create before pre_checklist is refused by the tool", async () => {

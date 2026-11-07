@@ -765,11 +765,24 @@ test("a replayed update cannot dismiss a task", () => {
 	assertIncludes(String(fault), "update dismissed a task");
 });
 
-test("a replayed update cannot hold or release the list", () => {
+test("a replayed update cannot hold the list", () => {
 	const held = faultOf((first) =>
 		stateEvent("e2", "update", first, makeState({ revision: 2, phase: "held", holdReason: "forged" })),
 	);
 	assertIncludes(String(held), "requires an open checklist");
+});
+
+test("a replayed update cannot reopen a held list", () => {
+	const session = new FakeSession();
+	const first = makeState();
+	const held = makeState({ revision: 2, phase: "held", holdReason: "user asked" });
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, first));
+	session.add(stateEvent("e2", "hold", first, held, { reason: "user asked" }));
+	session.add(preEntry("pre-2"));
+	session.add(stateEvent("e3", "update", held, makeState({ revision: 3 }), { preReceiptId: "pre-pre-2" }));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	assertIncludes(String(ledger.fromContext(new FakeContext(session) as never).fault), "requires an open checklist");
 });
 
 test("a replayed add cannot hold the list", () => {

@@ -68,7 +68,7 @@ export interface StateEvent {
 	reason: string | null;
 	preReceiptId: string | null;
 	ackReceiptEntryId: string | null;
-	/** The user message a model dismissal or replacement names as its authority. */
+	/** The user message a model dismissal or replacement cites as its basis. */
 	anchorId?: string | null;
 	replacedChecklist?: ReplacedChecklist | null;
 	state: ChecklistState;

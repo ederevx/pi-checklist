@@ -399,6 +399,8 @@ export class ReceiptLedger {
 		if (!this.allowedActor(event)) return "transition actor is not allowed";
 		const taskIssue = this.taskTransitionIssue(previous, state, event);
 		if (taskIssue) return taskIssue;
+		const openIssue = this.openStateIssue(previous, state, event);
+		if (openIssue) return openIssue;
 		if (event.operation === "hold" && (state.phase !== "held" || !state.holdReason)) return "malformed hold transition";
 		if (event.operation === "release" && (state.phase !== "open" || state.holdReason !== null)) return "malformed release transition";
 		if (event.operation === "dismiss_list" && state.phase !== "dismissed") return "malformed list dismissal";
@@ -470,6 +472,17 @@ export class ReceiptLedger {
 		return null;
 	}
 
+	/** Add and update run on an open list and never move its phase or hold. */
+	private openStateIssue(
+		previous: ChecklistState,
+		state: ChecklistState,
+		event: StateEvent,
+	): string | null {
+		if (event.operation !== "add" && event.operation !== "update") return null;
+		if (previous.phase !== "open" || state.phase !== "open") return "the change requires an open checklist";
+		return state.holdReason === previous.holdReason ? null : "the change altered the hold reason";
+	}
+
 	/** The displaced list a replacement names is the state it replaced. */
 	private describes(replaced: ReplacedChecklist | null, previous: ChecklistState): boolean {
 		return (
@@ -482,7 +495,7 @@ export class ReceiptLedger {
 		);
 	}
 
-	/** A dismissal keeps the list's phase and hold, and carries the reason it took. */
+	/** A dismissal preserves unrelated state and carries its recorded reason. */
 	private dismissalIssue(step: ReplayStep): string | null {
 		const { previous, event } = step;
 		if (event.operation !== "dismiss_task" && event.operation !== "dismiss_list") return null;
@@ -580,6 +593,7 @@ export class ReceiptLedger {
 		const changed = next.tasks.filter((task, index) => JSON.stringify(task) !== JSON.stringify(previous.tasks[index]));
 		if (event.operation === "update") {
 			if (changed.length > 1) return "update changed more than one task";
+			if (changed.some((task) => task.status === "dismissed")) return "update dismissed a task";
 			return null;
 		}
 		if (event.operation === "dismiss_task") {

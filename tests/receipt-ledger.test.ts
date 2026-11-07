@@ -754,3 +754,126 @@ test("a task dismissal whose note is not its reason is a fault", () => {
 	);
 	assertIncludes(String(fault), "does not carry its reason");
 });
+
+test("a replayed update cannot dismiss a task", () => {
+	const fault = faultOf((first) =>
+		stateEvent("e2", "update", first, makeState({
+			revision: 2,
+			tasks: [{ taskId: "task-1", title: "first", status: "dismissed", note: "forged" }, first.tasks[1]],
+		})),
+	);
+	assertIncludes(String(fault), "update dismissed a task");
+});
+
+test("a replayed update cannot hold or release the list", () => {
+	const held = faultOf((first) =>
+		stateEvent("e2", "update", first, makeState({ revision: 2, phase: "held", holdReason: "forged" })),
+	);
+	assertIncludes(String(held), "requires an open checklist");
+});
+
+test("a replayed add cannot hold the list", () => {
+	const fault = faultOf((first) =>
+		stateEvent("e2", "add", first, makeState({
+			revision: 2,
+			phase: "held",
+			holdReason: "forged",
+			tasks: [...first.tasks, { taskId: "task-3", title: "third", status: "pending", note: null }],
+		})),
+	);
+	assertIncludes(String(fault), "requires an open checklist");
+});
+
+test("a replacement replayed with a non-user anchor is a fault", () => {
+	const fault = faultOf(replacement({ anchorId: "pre-1" }));
+	assertIncludes(String(fault), "does not name a user message");
+});
+
+test("a replacement replayed with an anchor later than itself is a fault", () => {
+	const session = new FakeSession();
+	const first = makeState();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, first));
+	session.add(userEntry("u2"), preEntry("pre-2"));
+	session.add(stateEvent("e2", "replace", first, makeState({ checklistId: "list-2" }), {
+		anchorId: "u3",
+		reason: "changed",
+		preReceiptId: "pre-pre-2",
+		replacedChecklist: { checklistId: "list-1", revision: 1, title: "Work", phase: "open", holdReason: null },
+	}));
+	session.add(userEntry("u3"));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	assertIncludes(String(ledger.fromContext(new FakeContext(session) as never).fault), "does not precede");
+});
+
+test("a model replacement of a held list records the hold it displaced", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	ledger.transition({ kind: "hold", reason: "user asked", actor: "user" }, ctx as never);
+	const held = current(ledger, ctx);
+	const anchorId = laterTurn(session, "u2");
+	session.add(preEntry("pre-2"));
+	const result = ledger.transition(
+		{
+			kind: "replace",
+			checklistId: held.checklistId,
+			revision: held.revision,
+			title: "Next",
+			tasks: ["read"],
+			reason: "priorities changed",
+			anchorId,
+			actor: "model",
+		},
+		ctx as never,
+	);
+	assert(result.ok, "a cited replacement of a held list should succeed");
+	const view = ledger.fromContext(ctx as never);
+	assertEq(view.fault, null);
+	const state = view.state as ChecklistState;
+	assertEq(state.phase, "open");
+	assertEq(state.holdReason, null);
+	assertEq(view.events.at(-1)?.replacedChecklist?.phase, "held");
+	assertEq(view.events.at(-1)?.replacedChecklist?.holdReason, "user asked");
+});
+
+test("a replacement cannot reuse an earlier checklist identity", () => {
+	const session = new FakeSession();
+	const first = makeState();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, first));
+	session.add(stateEvent("e2", "dismiss_list", first, makeState({ revision: 2, phase: "dismissed", holdReason: "gone" }), { reason: "gone" }));
+	session.add(preEntry("pre-2"));
+	session.add(stateEvent("e3", "create", null, makeState({ checklistId: "list-2", title: "Second" }), { preReceiptId: "pre-pre-2" }));
+	session.add(userEntry("u2"), preEntry("pre-3"));
+	session.add(stateEvent("e4", "replace", makeState({ checklistId: "list-2", title: "Second" }), makeState({ checklistId: "list-1", title: "Third" }), {
+		anchorId: "u2",
+		reason: "changed",
+		preReceiptId: "pre-pre-3",
+		replacedChecklist: { checklistId: "list-2", revision: 1, title: "Second", phase: "open", holdReason: null },
+	}));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	assertIncludes(String(ledger.fromContext(new FakeContext(session) as never).fault), "reused a checklist identity");
+});
+
+test("a replacement receipt cannot be replayed twice", () => {
+	const session = new FakeSession();
+	const first = makeState();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, first));
+	session.add(userEntry("u2"), preEntry("pre-2"));
+	session.add(stateEvent("e2", "replace", first, makeState({ checklistId: "list-2" }), {
+		anchorId: "u2",
+		reason: "changed",
+		preReceiptId: "pre-pre-2",
+		replacedChecklist: { checklistId: "list-1", revision: 1, title: "Work", phase: "open", holdReason: null },
+	}));
+	session.add(userEntry("u3"));
+	session.add(stateEvent("e3", "replace", makeState({ checklistId: "list-2" }), makeState({ checklistId: "list-3" }), {
+		anchorId: "u3",
+		reason: "changed again",
+		preReceiptId: "pre-pre-2",
+		replacedChecklist: { checklistId: "list-2", revision: 1, title: "Work", phase: "open", holdReason: null },
+	}));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	assertIncludes(String(ledger.fromContext(new FakeContext(session) as never).fault), "consumed receipt");
+});

@@ -162,8 +162,9 @@ export class ChecklistTool {
 				anchorId: String(params.anchorId ?? ""),
 				actor: "model" as const,
 			};
-			const taskId = this.identifier(params.taskId);
-			return taskId ? { kind: "dismissTask", taskId, ...common } : { kind: "dismissList", ...common };
+			return params.taskId === undefined
+				? { kind: "dismissList", ...common }
+				: { kind: "dismissTask", taskId: this.identifier(params.taskId), ...common };
 		}
 		if (action === "replace") {
 			return {

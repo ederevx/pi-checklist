@@ -126,6 +126,40 @@ test("a checklist change forces a fresh acknowledgement", async () => {
 	assertEq(result.continue, true);
 });
 
+test("a replacement needs its own acknowledgement before the run can settle", async () => {
+	const { pi, ctx, session } = setup();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	await pi.tool("pre_checklist", { acknowledge: true }, ctx);
+	await pi.tool("checklist", { action: "create", title: "Ship", tasks: ["build"] }, ctx);
+	let view = (await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { state: { checklistId: string; revision: number; tasks: Array<{ taskId: string }> } };
+	};
+	await pi.tool("checklist", {
+		action: "update",
+		checklistId: view.details.state.checklistId,
+		revision: view.details.state.revision,
+		taskId: view.details.state.tasks[0].taskId,
+		status: "done",
+		note: "built",
+	}, ctx);
+	view = (await pi.tool("checklist", { action: "list" }, ctx)) as typeof view;
+	ackPair(session.entries, view.details.state.checklistId, view.details.state.revision, 1);
+	session.add(userEntry("u2", "priorities changed"), preEntry("pre-2"));
+	const replaced = (await pi.tool("checklist", {
+		action: "replace",
+		checklistId: view.details.state.checklistId,
+		revision: view.details.state.revision,
+		title: "Next",
+		tasks: ["read"],
+		reason: "priorities changed",
+		anchorId: "u2",
+	}, ctx)) as { details: { kind: string; revision: number } };
+	assertEq(replaced.details.kind, "mutation");
+	assertEq(replaced.details.revision, 1);
+	const result = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as { continue?: boolean };
+	assertEq(result.continue, true, "the old acknowledgement cannot settle the new list");
+});
+
 test("pi-consult's implementation gate sees these tools as ordinary callables", () => {
 	const { pi } = setup();
 	const names = [...pi.tools.keys()].sort();

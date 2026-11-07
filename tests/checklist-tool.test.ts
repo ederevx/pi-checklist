@@ -368,6 +368,23 @@ test("dismiss without a taskId dismisses the whole list", async () => {
 	assertIncludes(sent.content, "Model dismissed checklist");
 });
 
+test("a blank taskId is a task dismissal, not a list dismissal", async () => {
+	const { pi, ctx, session } = setup();
+	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	const state = await list(pi, ctx);
+	session.add(userEntry("u2", "drop one"));
+	const result = (await pi.tool("checklist", {
+		action: "dismiss",
+		checklistId: state.checklistId,
+		revision: state.revision,
+		taskId: " ",
+		reason: "obsolete",
+		anchorId: "u2",
+	}, ctx)) as { details: { code?: string } };
+	assertEq(result.details.code, "UNKNOWN_TASK");
+	assertEq((await list(pi, ctx)).phase, "open");
+});
+
 test("replace needs a fresh receipt and reports both lists", async () => {
 	const { pi, ctx, session } = setup();
 	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
@@ -424,8 +441,7 @@ test("dismiss and replace refuse a missing reason or anchor", async () => {
 	assertEq(pi.messages.length, 0, "a refusal is never announced");
 });
 
-test("replace refuses a field the action does not declare", async () => {
-	const { pi, ctx } = setup();
+test("replace refuses a field the action does not declare", async () => {	const { pi, ctx } = setup();
 	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
 	const state = await list(pi, ctx);
 	const result = (await pi.tool("checklist", {

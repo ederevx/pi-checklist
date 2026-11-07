@@ -22,9 +22,11 @@ import {
 	type Acknowledgement,
 	type BranchEntry,
 	type ChecklistDetails,
+	type ChecklistOperation,
 	type ChecklistState,
 	type ChecklistView,
 	type NoticeDetails,
+	type ReplacedChecklist,
 	type SettleEvent,
 	type StateEvent,
 	type TaskStatus,
@@ -33,6 +35,16 @@ import {
 
 export type TransitionCommand =
 	| { kind: "create"; title: string; tasks: string[]; actor: "model" }
+	| {
+			kind: "replace";
+			checklistId: string;
+			revision: number;
+			title: string;
+			tasks: string[];
+			reason: string;
+			anchorId: string;
+			actor: "model";
+	  }
 	| { kind: "add"; checklistId: string; revision: number; title: string; actor: "model" }
 	| {
 			kind: "update";
@@ -46,12 +58,41 @@ export type TransitionCommand =
 	| { kind: "hold"; reason: string; actor: "user" }
 	| { kind: "release"; actor: "user" }
 	| { kind: "dismissTask"; taskId: string; reason: string; actor: "user" }
-	| { kind: "dismissList"; reason: string; actor: "user" };
+	| {
+			kind: "dismissTask";
+			checklistId: string;
+			revision: number;
+			taskId: string;
+			reason: string;
+			anchorId: string;
+			actor: "model";
+	  }
+	| { kind: "dismissList"; reason: string; actor: "user" }
+	| {
+			kind: "dismissList";
+			checklistId: string;
+			revision: number;
+			reason: string;
+			anchorId: string;
+			actor: "model";
+	  };
 
 interface NextTransition {
 	details: ChecklistDetails;
 	event?: StateEvent;
 	state?: ChecklistState;
+}
+
+/** One step of a branch replay: the event, where it sits, and what preceded it. */
+interface ReplayStep {
+	previous: ChecklistState | null;
+	event: StateEvent;
+	branch: readonly BranchEntry[];
+	index: number;
+	previousIndex: number;
+	precedingPreReceiptIds: readonly string[];
+	usedPreReceiptIds: readonly string[];
+	acceptedIds: readonly string[];
 }
 
 export class ReceiptLedger {
@@ -77,6 +118,7 @@ export class ReceiptLedger {
 		const usedPreReceiptIds: string[] = [];
 		const precedingPreReceiptIds: string[] = [];
 		const events: StateEvent[] = [];
+		const acceptedIds: string[] = [];
 		let state: ChecklistState | null = null;
 		let fault: string | null = null;
 		let stateIndex = -1;
@@ -98,15 +140,26 @@ export class ReceiptLedger {
 			}
 			const event = read.event;
 			if (!event) continue;
-			const issue = this.transitionIssue(state, event, precedingPreReceiptIds, usedPreReceiptIds);
+			const issue = this.transitionIssue({
+				previous: state,
+				event,
+				branch,
+				index,
+				previousIndex: stateIndex,
+				precedingPreReceiptIds,
+				usedPreReceiptIds,
+				acceptedIds,
+			});
 			if (issue) {
 				fault = issue;
 				break;
 			}
 			if (event.operation === "create" && event.preReceiptId) usedPreReceiptIds.push(event.preReceiptId);
+			if (event.operation === "replace" && event.preReceiptId) usedPreReceiptIds.push(event.preReceiptId);
 			state = event.state;
 			events.push(event);
 			stateIndex = index;
+			acceptedIds.push(event.state.checklistId);
 		}
 
 		const anchorIndex = this.lastIndex(branch, (entry) => this.isUser(entry));
@@ -133,6 +186,7 @@ export class ReceiptLedger {
 			acknowledged: preReceiptIds.length > 0,
 			branchPreReceiptIds,
 			state,
+			stateEntryId: stateIndex >= 0 ? branch[stateIndex].id : null,
 			fault,
 			preReceiptIds,
 			usedPreReceiptIds,
@@ -157,9 +211,13 @@ export class ReceiptLedger {
 	/** Apply one model or user command, persisting a canonical transition. */
 	transition(command: TransitionCommand, ctx: ExtensionContext): TransitionResult {
 		const view = this.fromContext(ctx);
-		const next = this.next(command, view);
+		const next = this.next(command, view, this.branchOf(ctx));
 		if (next.event) this.pi.appendEntry(ChecklistContract.STATE_TYPE, next.event);
 		return { ok: next.details.kind !== "error", details: next.details, state: next.state };
+	}
+
+	private branchOf(ctx: ExtensionContext): BranchEntry[] {
+		return ctx.sessionManager.getBranch() as unknown as BranchEntry[];
 	}
 
 	/** Validate and describe one model acknowledgement. */
@@ -238,6 +296,9 @@ export class ReceiptLedger {
 		) {
 			return { fault: "malformed pi-checklist transition record" };
 		}
+		if (!ChecklistContract.OPERATIONS.includes(data.operation as ChecklistOperation)) {
+			return { fault: "unknown pi-checklist transition operation" };
+		}
 		if (data.previousRevision !== null && typeof data.previousRevision !== "number") {
 			return { fault: "malformed pi-checklist revision record" };
 		}
@@ -251,8 +312,31 @@ export class ReceiptLedger {
 				reason: typeof data.reason === "string" ? data.reason : null,
 				preReceiptId: typeof data.preReceiptId === "string" ? data.preReceiptId : null,
 				ackReceiptEntryId: typeof data.ackReceiptEntryId === "string" ? data.ackReceiptEntryId : null,
+				anchorId: typeof data.anchorId === "string" ? data.anchorId : null,
+				replacedChecklist: this.readReplaced(data.replacedChecklist),
 				state,
 			},
+		};
+	}
+
+	/** The displaced list a replacement names, or null when the record carries none. */
+	private readReplaced(value: unknown): ReplacedChecklist | null {
+		const replaced = this.record(value);
+		if (
+			!replaced ||
+			typeof replaced.checklistId !== "string" ||
+			typeof replaced.revision !== "number" ||
+			typeof replaced.title !== "string" ||
+			(replaced.phase !== "open" && replaced.phase !== "held")
+		) {
+			return null;
+		}
+		return {
+			checklistId: replaced.checklistId,
+			revision: replaced.revision,
+			title: replaced.title,
+			phase: replaced.phase,
+			holdReason: typeof replaced.holdReason === "string" ? replaced.holdReason : null,
 		};
 	}
 
@@ -301,33 +385,11 @@ export class ReceiptLedger {
 		};
 	}
 
-	private transitionIssue(
-		previous: ChecklistState | null,
-		event: StateEvent,
-		precedingPreReceiptIds: readonly string[],
-		usedPreReceiptIds: readonly string[],
-	): string | null {
+	private transitionIssue(step: ReplayStep): string | null {
+		const { previous, event } = step;
 		const state = event.state;
-		if (event.operation === "create") {
-			if (event.actor !== "model") return "create transition is not model-authored";
-			if (event.previousRevision !== null || state.revision !== 1 || state.phase !== "open") {
-				return "malformed create transition";
-			}
-			if (previous && previous.phase !== "completed" && previous.phase !== "dismissed") {
-				return "create over a live checklist";
-			}
-			if (previous && previous.checklistId === state.checklistId) return "create reused a checklist identity";
-			if (!event.preReceiptId) return "create transition has no pre_checklist receipt";
-			if (!precedingPreReceiptIds.includes(event.preReceiptId)) {
-				return "create uses a receipt that is absent or later on this branch";
-			}
-			if (usedPreReceiptIds.includes(event.preReceiptId)) return "create reused a consumed receipt";
-			if (state.holdReason !== null) return "create starts with a hold reason";
-			if (state.tasks.some((task) => task.status !== "pending" || task.note !== null)) {
-				return "create starts with terminal or annotated tasks";
-			}
-			return this.taskSetIssue(state, 1, MAX_TASKS);
-		}
+		if (event.operation === "create") return this.createIssue(step);
+		if (event.operation === "replace") return this.replaceIssue(step);
 		if (previous === null) return "first transition is not a create";
 		if (state.checklistId !== previous.checklistId) return "checklist identity changed";
 		if (event.previousRevision !== previous.revision) return "transition revision does not match the previous state";
@@ -347,14 +409,145 @@ export class ReceiptLedger {
 				return "completion with unfinished tasks";
 			}
 		}
+		return this.modelDismissalIssue(step);
+	}
+
+	/** Rules for the transition that starts a list from nothing. */
+	private createIssue(step: ReplayStep): string | null {
+		const { previous, event } = step;
+		const state = event.state;
+		if (event.actor !== "model") return "create transition is not model-authored";
+		if (event.previousRevision !== null || state.revision !== 1 || state.phase !== "open") {
+			return "malformed create transition";
+		}
+		if (previous && previous.phase !== "completed" && previous.phase !== "dismissed") {
+			return "create over a live checklist";
+		}
+		if (previous && previous.checklistId === state.checklistId) return "create reused a checklist identity";
+		if (!event.preReceiptId) return "create transition has no pre_checklist receipt";
+		return this.receiptIssue(step) ?? this.newListIssue(state) ?? this.taskSetIssue(state, 1, MAX_TASKS);
+	}
+
+	/** Rules for the transition that starts a new list over a live one. */
+	private replaceIssue(step: ReplayStep): string | null {
+		const { previous, event } = step;
+		const state = event.state;
+		if (event.actor !== "model") return "replacement transition is not model-authored";
+		if (!previous) return "replacement has no previous checklist";
+		if (previous.phase !== "open" && previous.phase !== "held") return "replacement over a closed checklist";
+		if (event.previousRevision !== previous.revision) return "replacement revision does not match the previous state";
+		if (state.revision !== 1 || state.phase !== "open") return "malformed replacement transition";
+		if (step.acceptedIds.includes(state.checklistId)) return "replacement reused a checklist identity";
+		if (!this.describes(step.event.replacedChecklist ?? null, previous)) {
+			return "replacement does not describe the checklist it replaced";
+		}
+		if (!event.reason?.trim()) return "replacement has no reason";
+		const anchor = this.anchorIssue(step.branch, event.anchorId ?? null, step.index, step.previousIndex);
+		if (anchor) return anchor.message;
+		if (!event.preReceiptId) return "replacement transition has no pre_checklist receipt";
+		return this.receiptIssue(step) ?? this.newListIssue(state) ?? this.taskSetIssue(state, 1, MAX_TASKS);
+	}
+
+	/** A receipt is spent once and must already sit on this branch. */
+	private receiptIssue(step: ReplayStep): string | null {
+		const id = step.event.preReceiptId as string;
+		if (!step.precedingPreReceiptIds.includes(id)) {
+			return "transition uses a receipt that is absent or later on this branch";
+		}
+		if (step.usedPreReceiptIds.includes(id)) return "transition reused a consumed receipt";
+		return null;
+	}
+
+	/** A list starts with a title, no hold, and nothing already finished. */
+	private newListIssue(state: ChecklistState): string | null {
+		if (!state.title.trim()) return "a new list has no title";
+		if (state.holdReason !== null) return "a new list starts with a hold reason";
+		if (state.tasks.some((task) => task.status !== "pending" || task.note !== null)) {
+			return "a new list starts with terminal or annotated tasks";
+		}
+		return null;
+	}
+
+	/** The displaced list a replacement names is the state it replaced. */
+	private describes(replaced: ReplacedChecklist | null, previous: ChecklistState): boolean {
+		return (
+			replaced !== null &&
+			replaced.checklistId === previous.checklistId &&
+			replaced.revision === previous.revision &&
+			replaced.title === previous.title &&
+			replaced.phase === previous.phase &&
+			replaced.holdReason === previous.holdReason
+		);
+	}
+
+	/** A model dismissal names the user message whose priorities it acts on. */
+	private modelDismissalIssue(step: ReplayStep): string | null {
+		const { previous, event } = step;
+		if (event.actor !== "model") return null;
+		if (event.operation !== "dismiss_task" && event.operation !== "dismiss_list") return null;
+		if (previous === null) return "model dismissal has no previous checklist";
+		if (previous.phase !== "open" && previous.phase !== "held") return "model dismissal over a closed checklist";
+		if (!event.reason?.trim()) return "model dismissal has no reason";
+		const anchor = this.anchorIssue(step.branch, event.anchorId ?? null, step.index, step.previousIndex);
+		if (anchor) return anchor.message;
+		if (event.operation === "dismiss_task") {
+			if (event.state.phase !== previous.phase) return "model task dismissal changed the phase";
+			if (event.state.holdReason !== previous.holdReason) return "model task dismissal changed the hold reason";
+			const index = event.state.tasks.findIndex(
+				(task, position) => task.status === "dismissed" && previous.tasks[position]?.status !== "dismissed",
+			);
+			if (index < 0) return "model task dismissal changed no task";
+			if (event.state.tasks[index].note !== event.reason) return "model task dismissal does not carry its reason";
+		}
+		return null;
+	}
+
+	/** The anchor must be a user message on this branch, after the current revision. */
+	private anchorIssue(
+		branch: readonly BranchEntry[],
+		anchorId: string | null,
+		index: number,
+		previousIndex: number,
+	): { code: string; message: string } | null {
+		const id = (anchorId ?? "").trim();
+		if (!id) {
+			return {
+				code: "ANCHOR_REQUIRED",
+				message: "A model dismissal or replacement needs the anchorId of the user message that changed priorities.",
+			};
+		}
+		const anchorIndex = branch.findIndex((entry) => entry.id === id);
+		if (anchorIndex < 0) {
+			return { code: "ANCHOR_INVALID", message: `anchorId ${JSON.stringify(id)} names no entry on this branch.` };
+		}
+		if (!this.isUser(branch[anchorIndex])) {
+			return { code: "ANCHOR_INVALID", message: `anchorId ${JSON.stringify(id)} does not name a user message.` };
+		}
+		if (previousIndex < 0 || anchorIndex <= previousIndex) {
+			return {
+				code: "ANCHOR_INVALID",
+				message: `anchorId ${JSON.stringify(id)} does not follow the current checklist revision.`,
+			};
+		}
+		if (anchorIndex >= index) {
+			return { code: "ANCHOR_INVALID", message: `anchorId ${JSON.stringify(id)} does not precede the transition.` };
+		}
 		return null;
 	}
 
 	private allowedActor(event: StateEvent): boolean {
-		if (event.operation === "create" || event.operation === "add" || event.operation === "update") {
+		if (
+			event.operation === "create" ||
+			event.operation === "replace" ||
+			event.operation === "add" ||
+			event.operation === "update"
+		) {
 			return event.actor === "model";
 		}
 		if (event.operation === "complete") return event.actor === "gate";
+		if (event.operation === "dismiss_task" || event.operation === "dismiss_list") {
+			return event.actor === "user" || event.actor === "model";
+		}
 		return event.actor === "user";
 	}
 
@@ -404,15 +597,20 @@ export class ReceiptLedger {
 		return JSON.stringify(left) === JSON.stringify(right);
 	}
 
-	private next(command: TransitionCommand, view: ChecklistView): NextTransition {
+	private next(
+		command: TransitionCommand,
+		view: ChecklistView,
+		branch: readonly BranchEntry[],
+	): NextTransition {
 		if (view.fault) return this.nextFailure("STATE_FAULT", view.fault);
 		if (command.kind === "create") return this.create(command, view);
+		if (command.kind === "replace") return this.replace(command, view, branch);
 		const state = view.state;
 		if (!state) return this.nextFailure("NO_CHECKLIST", "No checklist is open on this branch.");
 		if (command.kind === "hold") return this.hold(command, state);
 		if (command.kind === "release") return this.release(command, state);
-		if (command.kind === "dismissTask") return this.dismissTask(command, state);
-		if (command.kind === "dismissList") return this.dismissList(command, state);
+		if (command.kind === "dismissTask") return this.dismissTask(command, state, view, branch);
+		if (command.kind === "dismissList") return this.dismissList(command, state, view, branch);
 		if (state.phase !== "open") return this.nextFailure("NOT_OPEN", `Checklist is ${state.phase}.`);
 		const reference = this.referenceIssue(state, command.checklistId, command.revision);
 		if (reference) return this.nextFailure(reference.code, reference.message);
@@ -425,30 +623,39 @@ export class ReceiptLedger {
 			return this.nextFailure("ALREADY_OPEN", "A checklist is already open on this branch.");
 		}
 		if (!view.acknowledged) return this.nextFailure("PRE_REQUIRED", this.contract.ackDenial());
-		if (command.tasks.length < 1 || command.tasks.length > MAX_TASKS) {
-			return this.nextFailure("TASK_LIMIT", `A checklist needs one to ${MAX_TASKS} tasks.`);
-		}
-		const titles = command.tasks.map((title) => title.trim());
-		if (titles.some((title) => !title)) {
-			return this.nextFailure("TITLE_REQUIRED", "Every task needs a non-empty title.");
-		}
-		const preReceiptId = [...view.branchPreReceiptIds]
-			.reverse()
-			.find((id) => !view.usedPreReceiptIds.includes(id));
+		const drafted = this.draftState(command.title, command.tasks);
+		if (!drafted.state) return drafted.failure as NextTransition;
+		const preReceiptId = this.freshReceipt(view);
 		if (!preReceiptId) {
 			return this.nextFailure("PRE_REQUIRED", "Call pre_checklist again before starting this checklist.");
 		}
-		const state: ChecklistState = {
-			checklistId: randomUUID(),
-			revision: 1,
-			title: command.title.trim(),
-			phase: "open",
-			tasks: titles.map((title) => ({ taskId: randomUUID(), title, status: "pending", note: null })),
-			holdReason: null,
-		};
-		if (!state.title) return this.nextFailure("TITLE_REQUIRED", "A checklist needs a non-empty title.");
-		const event = this.event("create", "model", null, state, preReceiptId);
-		return this.mutation(event);
+		return this.mutation(this.event("create", "model", null, drafted.state, preReceiptId));
+	}
+
+	private replace(
+		command: Extract<TransitionCommand, { kind: "replace" }>,
+		view: ChecklistView,
+		branch: readonly BranchEntry[],
+	): NextTransition {
+		const state = view.state;
+		if (!state) return this.nextFailure("NO_CHECKLIST", "No checklist is open on this branch.");
+		if (state.phase !== "open" && state.phase !== "held") {
+			return this.nextFailure("NOT_OPEN", `Checklist is ${state.phase}.`);
+		}
+		const refused = this.modelReference(view, branch, command);
+		if (refused) return refused;
+		const drafted = this.draftState(command.title, command.tasks);
+		if (!drafted.state) return drafted.failure as NextTransition;
+		const preReceiptId = this.freshReceipt(view);
+		if (!preReceiptId) {
+			return this.nextFailure("PRE_REQUIRED", "Call pre_checklist again before replacing this checklist.");
+		}
+		return this.mutation(
+			this.event("replace", "model", state, drafted.state, preReceiptId, command.reason.trim(), null, {
+				anchorId: command.anchorId.trim(),
+				replacedChecklist: this.replacedSnapshot(state),
+			}),
+		);
 	}
 
 	private add(command: Extract<TransitionCommand, { kind: "add" }>, state: ChecklistState): NextTransition {
@@ -511,9 +718,15 @@ export class ReceiptLedger {
 	private dismissTask(
 		command: Extract<TransitionCommand, { kind: "dismissTask" }>,
 		state: ChecklistState,
+		view: ChecklistView,
+		branch: readonly BranchEntry[],
 	): NextTransition {
 		if (state.phase !== "open" && state.phase !== "held") {
 			return this.nextFailure("NOT_OPEN", `Checklist is ${state.phase}.`);
+		}
+		if (command.actor === "model") {
+			const refused = this.modelReference(view, branch, command);
+			if (refused) return refused;
 		}
 		const index = state.tasks.findIndex((task) => task.taskId === command.taskId);
 		if (index < 0) return this.nextFailure("UNKNOWN_TASK", "No such task in this checklist.");
@@ -526,20 +739,93 @@ export class ReceiptLedger {
 			position === index ? { ...task, status: "dismissed" as TaskStatus, note: reason } : task,
 		);
 		const next: ChecklistState = { ...state, revision: state.revision + 1, tasks };
-		return this.mutation(this.event("dismiss_task", "user", state, next, null, reason));
+		const extra = command.actor === "model" ? { anchorId: command.anchorId.trim() } : {};
+		return this.mutation(this.event("dismiss_task", command.actor, state, next, null, reason, null, extra));
 	}
 
 	private dismissList(
 		command: Extract<TransitionCommand, { kind: "dismissList" }>,
 		state: ChecklistState,
+		view: ChecklistView,
+		branch: readonly BranchEntry[],
 	): NextTransition {
 		if (state.phase !== "open" && state.phase !== "held") {
 			return this.nextFailure("NOT_OPEN", `Checklist is ${state.phase}.`);
 		}
+		if (command.actor === "model") {
+			const refused = this.modelReference(view, branch, command);
+			if (refused) return refused;
+		}
 		const reason = command.reason.trim();
 		if (!reason) return this.nextFailure("REASON_REQUIRED", "A dismissal needs a reason.");
 		const next: ChecklistState = { ...state, revision: state.revision + 1, phase: "dismissed", holdReason: reason };
-		return this.mutation(this.event("dismiss_list", "user", state, next, null, reason));
+		const extra = command.actor === "model" ? { anchorId: command.anchorId.trim() } : {};
+		return this.mutation(this.event("dismiss_list", command.actor, state, next, null, reason, null, extra));
+	}
+
+	/** The reference and anchor a model dismissal or replacement must satisfy. */
+	private modelReference(
+		view: ChecklistView,
+		branch: readonly BranchEntry[],
+		command: { checklistId: string; revision: number; reason: string; anchorId: string },
+	): NextTransition | null {
+		const state = view.state;
+		if (!state) return this.nextFailure("NO_CHECKLIST", "No checklist is open on this branch.");
+		const reference = this.referenceIssue(state, command.checklistId, command.revision);
+		if (reference) return this.nextFailure(reference.code, reference.message);
+		if (!command.reason.trim()) {
+			return this.nextFailure("REASON_REQUIRED", "A dismissal or replacement needs a reason.");
+		}
+		const stateIndex = branch.findIndex((entry) => entry.id === view.stateEntryId);
+		const anchor = this.anchorIssue(branch, command.anchorId, branch.length, stateIndex);
+		if (anchor) return this.nextFailure(anchor.code, anchor.message);
+		return null;
+	}
+
+	/** A new list from a title and task titles, or the refusal it earns. */
+	private draftState(
+		title: string,
+		tasks: string[],
+	): { state?: ChecklistState; failure?: NextTransition } {
+		if (tasks.length < 1 || tasks.length > MAX_TASKS) {
+			return { failure: this.nextFailure("TASK_LIMIT", `A checklist needs one to ${MAX_TASKS} tasks.`) };
+		}
+		const titles = tasks.map((value) => value.trim());
+		if (titles.some((value) => !value)) {
+			return { failure: this.nextFailure("TITLE_REQUIRED", "Every task needs a non-empty title.") };
+		}
+		const heading = title.trim();
+		if (!heading) return { failure: this.nextFailure("TITLE_REQUIRED", "A checklist needs a non-empty title.") };
+		return {
+			state: {
+				checklistId: randomUUID(),
+				revision: 1,
+				title: heading,
+				phase: "open",
+				tasks: titles.map((value) => ({ taskId: randomUUID(), title: value, status: "pending", note: null })),
+				holdReason: null,
+			},
+		};
+	}
+
+	/** The newest pre_checklist receipt this branch has not spent. */
+	private freshReceipt(view: ChecklistView): string | null {
+		return (
+			[...view.branchPreReceiptIds]
+				.reverse()
+				.find((id) => !view.usedPreReceiptIds.includes(id)) ?? null
+		);
+	}
+
+	/** What a replacement displaced, kept in the event that replaced it. */
+	private replacedSnapshot(state: ChecklistState): ReplacedChecklist {
+		return {
+			checklistId: state.checklistId,
+			revision: state.revision,
+			title: state.title,
+			phase: state.phase === "held" ? "held" : "open",
+			holdReason: state.holdReason,
+		};
 	}
 
 	private event(
@@ -550,6 +836,7 @@ export class ReceiptLedger {
 		preReceiptId: string | null,
 		reason: string | null = null,
 		ackReceiptEntryId: string | null = null,
+		extra: Partial<StateEvent> = {},
 	): StateEvent {
 		return {
 			schema: SCHEMA,
@@ -560,7 +847,10 @@ export class ReceiptLedger {
 			reason,
 			preReceiptId,
 			ackReceiptEntryId,
+			anchorId: null,
+			replacedChecklist: null,
 			state,
+			...extra,
 		};
 	}
 

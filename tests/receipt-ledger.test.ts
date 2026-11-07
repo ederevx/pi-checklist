@@ -391,3 +391,269 @@ test("a create with a hold reason is invalid", () => {
 	const ledger = new ReceiptLedger(new FakePi(session) as never);
 	assert(ledger.fromContext(new FakeContext(session) as never).fault !== null, "a create cannot start held");
 });
+
+/** Read the branch's current list, or fail loudly. */
+function current(ledger: ReceiptLedger, ctx: FakeContext): ChecklistState {
+	const view = ledger.fromContext(ctx as never);
+	assert(view.fault === null, `unexpected fault: ${view.fault}`);
+	assert(view.state !== null, "expected a list");
+	return view.state;
+}
+
+/** A later user message, the anchor a model dismissal must name. */
+function laterTurn(session: FakeSession, id: string): string {
+	session.add(userEntry(id, "priorities changed: do the other thing"));
+	return id;
+}
+
+test("a model dismissal names the user message that changed priorities", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	const state = current(ledger, ctx);
+	const anchorId = laterTurn(session, "u2");
+	const result = ledger.transition(
+		{
+			kind: "dismissTask",
+			checklistId: state.checklistId,
+			revision: state.revision,
+			taskId: state.tasks[0].taskId,
+			reason: "no longer wanted",
+			anchorId,
+			actor: "model",
+		},
+		ctx as never,
+	);
+	assert(result.ok, "a cited later turn should allow the dismissal");
+	const after = current(ledger, ctx);
+	assertEq(after.tasks[0].status, "dismissed");
+	assertEq(after.tasks[0].note, "no longer wanted");
+	assertEq(after.phase, "open");
+	assertEq(after.revision, 2);
+	const event = ledger.fromContext(ctx as never).events.at(-1);
+	assertEq(event?.actor, "model");
+	assertEq(event?.anchorId, anchorId);
+});
+
+test("a model dismissal needs a reason and a resolvable anchor", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	const state = current(ledger, ctx);
+	const anchorId = laterTurn(session, "u2");
+	const command = (overrides: Record<string, unknown>) =>
+		ledger.transition(
+			{
+				kind: "dismissTask",
+				checklistId: state.checklistId,
+				revision: state.revision,
+				taskId: state.tasks[0].taskId,
+				reason: "changed",
+				anchorId,
+				actor: "model",
+				...overrides,
+			} as never,
+			ctx as never,
+		);
+	const missingReason = command({ reason: "  " });
+	if (missingReason.details.kind === "error") assertEq(missingReason.details.code, "REASON_REQUIRED");
+	else throw new Error("expected a reason refusal");
+	const missingAnchor = command({ anchorId: "nope" });
+	if (missingAnchor.details.kind === "error") assertEq(missingAnchor.details.code, "ANCHOR_INVALID");
+	else throw new Error("expected an anchor refusal");
+	const blankAnchor = command({ anchorId: "" });
+	if (blankAnchor.details.kind === "error") assertEq(blankAnchor.details.code, "ANCHOR_REQUIRED");
+	else throw new Error("expected a missing-anchor refusal");
+	const notUser = command({ anchorId: "pre-1" });
+	if (notUser.details.kind === "error") assertEq(notUser.details.code, "ANCHOR_INVALID");
+	else throw new Error("expected a non-user anchor refusal");
+});
+
+test("an anchor before the current revision or older than a change is refused", () => {
+	const { ledger, ctx, session } = setup();
+	session.add(userEntry("u0"));
+	create(ledger, ctx);
+	const state = current(ledger, ctx);
+	const dismiss = (anchorId: string, revision: number) =>
+		ledger.transition(
+			{
+				kind: "dismissTask",
+				checklistId: state.checklistId,
+				revision,
+				taskId: state.tasks[0].taskId,
+				reason: "changed",
+				anchorId,
+				actor: "model",
+			},
+			ctx as never,
+		);
+	const older = dismiss("u0", state.revision);
+	if (older.details.kind === "error") assertEq(older.details.code, "ANCHOR_INVALID");
+	else throw new Error("expected an out-of-order anchor refusal");
+	const anchorId = laterTurn(session, "u2");
+	ledger.transition(
+		{
+			kind: "update",
+			checklistId: state.checklistId,
+			revision: state.revision,
+			taskId: state.tasks[1].taskId,
+			status: "in_progress",
+			actor: "model",
+		},
+		ctx as never,
+	);
+	const consumed = dismiss(anchorId, state.revision + 1);
+	if (consumed.details.kind === "error") assertEq(consumed.details.code, "ANCHOR_INVALID");
+	else throw new Error("a mutation after the anchor must consume the opportunity");
+});
+
+test("a model dismissal of a held list keeps the user's hold", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	ledger.transition({ kind: "hold", reason: "user asked", actor: "user" }, ctx as never);
+	const held = current(ledger, ctx);
+	const anchorId = laterTurn(session, "u2");
+	const result = ledger.transition(
+		{
+			kind: "dismissTask",
+			checklistId: held.checklistId,
+			revision: held.revision,
+			taskId: held.tasks[0].taskId,
+			reason: "obsolete",
+			anchorId,
+			actor: "model",
+		},
+		ctx as never,
+	);
+	assert(result.ok, "a held task may be dismissed under the anchor rule");
+	const after = current(ledger, ctx);
+	assertEq(after.phase, "held");
+	assertEq(after.holdReason, "user asked");
+	assertEq(after.tasks[0].status, "dismissed");
+});
+
+test("a model list dismissal records its reason and closes the list", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	const state = current(ledger, ctx);
+	const anchorId = laterTurn(session, "u2");
+	const result = ledger.transition(
+		{
+			kind: "dismissList",
+			checklistId: state.checklistId,
+			revision: state.revision,
+			reason: "superseded by the new request",
+			anchorId,
+			actor: "model",
+		},
+		ctx as never,
+	);
+	assert(result.ok, "a cited list dismissal should succeed");
+	const after = current(ledger, ctx);
+	assertEq(after.phase, "dismissed");
+	assertEq(after.holdReason, "superseded by the new request");
+});
+
+test("a model replacement starts a new list and keeps the displaced one readable", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	const displaced = current(ledger, ctx);
+	const anchorId = laterTurn(session, "u2");
+	session.add(preEntry("pre-2"));
+	const result = ledger.transition(
+		{
+			kind: "replace",
+			checklistId: displaced.checklistId,
+			revision: displaced.revision,
+			title: "Next",
+			tasks: ["read", "write"],
+			reason: "priorities changed",
+			anchorId,
+			actor: "model",
+		},
+		ctx as never,
+	);
+	assert(result.ok, "a cited replacement with a fresh receipt should succeed");
+	const view = ledger.fromContext(ctx as never);
+	assertEq(view.fault, null);
+	const state = view.state as ChecklistState;
+	assertEq(state.phase, "open");
+	assertEq(state.revision, 1);
+	assertEq(state.title, "Next");
+	assert(state.checklistId !== displaced.checklistId, "the replacement needs a new identity");
+	const event = view.events.at(-1);
+	assertEq(event?.operation, "replace");
+	assertEq(event?.replacedChecklist?.checklistId, displaced.checklistId);
+	assertEq(event?.replacedChecklist?.revision, displaced.revision);
+});
+
+test("a replacement without a fresh receipt is refused", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	const state = current(ledger, ctx);
+	const anchorId = laterTurn(session, "u2");
+	const result = ledger.transition(
+		{
+			kind: "replace",
+			checklistId: state.checklistId,
+			revision: state.revision,
+			title: "Next",
+			tasks: ["read"],
+			reason: "priorities changed",
+			anchorId,
+			actor: "model",
+		},
+		ctx as never,
+	);
+	if (result.details.kind === "error") assertEq(result.details.code, "PRE_REQUIRED");
+	else throw new Error("expected a receipt refusal");
+});
+
+test("a model release is not permitted", () => {
+	const session = new FakeSession();
+	session.add(preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, makeState()));
+	session.add(stateEvent("e2", "hold", makeState(), makeState({ revision: 2, phase: "held", holdReason: "user" })));
+	session.add(stateEvent("e3", "release", makeState({ revision: 2, phase: "held", holdReason: "user" }), makeState({ revision: 3 }), { actor: "model" }));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	const view = ledger.fromContext(new FakeContext(session) as never);
+	assert(view.fault !== null, "only the user may release a hold");
+});
+
+test("a replacement that starts with finished tasks is a fault", () => {
+	const session = new FakeSession();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, makeState()));
+	session.add(userEntry("u2"));
+	session.add(preEntry("pre-2"));
+	session.add(stateEvent("e2", "replace", makeState(), makeState({
+		checklistId: "list-2",
+		title: "Next",
+		tasks: [{ taskId: "t9", title: "one", status: "done", note: "already" }],
+	}), {
+		anchorId: "u2",
+		reason: "changed",
+		preReceiptId: "pre-pre-2",
+		replacedChecklist: { checklistId: "list-1", revision: 1, title: "Work", phase: "open", holdReason: null },
+	}));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	const view = ledger.fromContext(new FakeContext(session) as never);
+	assert(view.fault !== null, "a replacement cannot start finished tasks");
+	assertIncludes(String(view.fault), "terminal or annotated");
+});
+
+test("a replacement that reuses the displaced identity is a fault", () => {
+	const session = new FakeSession();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, makeState()));
+	session.add(userEntry("u2"));
+	session.add(preEntry("pre-2"));
+	session.add(stateEvent("e2", "replace", makeState(), makeState({ title: "Next" }), {
+		anchorId: "u2",
+		reason: "changed",
+		preReceiptId: "pre-pre-2",
+		replacedChecklist: { checklistId: "list-1", revision: 1, title: "Work", phase: "open", holdReason: null },
+	}));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	const view = ledger.fromContext(new FakeContext(session) as never);
+	assert(view.fault !== null, "a replacement needs a new identity");
+	assertIncludes(String(view.fault), "identity");
+});

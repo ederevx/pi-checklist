@@ -288,7 +288,11 @@ export function stateEvent(
 		schema: SCHEMA,
 		eventId: id,
 		operation,
-		actor: operation === "complete" ? "gate" : operation === "create" || operation === "add" || operation === "update" ? "model" : "user",
+		actor: operation === "complete"
+			? "gate"
+			: operation === "create" || operation === "replace" || operation === "add" || operation === "update"
+				? "model"
+				: "user",
 		previousRevision: previous ? previous.revision : null,
 		reason: null,
 		preReceiptId: operation === "create" ? "pre-pre-1" : null,

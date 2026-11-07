@@ -31,6 +31,7 @@ export class ChecklistTool {
 	private readonly ledger: ReceiptLedger;
 	private readonly contract: ChecklistContract;
 	private readonly parameters = new ChecklistParameters();
+	private pi!: ExtensionAPI;
 
 	constructor(ledger: ReceiptLedger, contract: ChecklistContract) {
 		this.ledger = ledger;
@@ -38,16 +39,22 @@ export class ChecklistTool {
 	}
 
 	register(pi: ExtensionAPI): void {
+		this.pi = pi;
 		pi.registerTool({
 			name: "checklist",
 			label: "checklist",
 			description:
 				"Manage the branch's task checklist. Each action takes only its own fields. " +
 				"create: title, tasks[1-10]. add: checklistId, revision, title. update: " +
-				"checklistId, revision, taskId, status, note. ack: checklistId, revision, " +
-				"summary; sole tool call in its message. list: no other field. A list holds " +
-				"at most ten tasks. The run cannot settle while tasks are unfinished or the " +
-				"current revision is unacknowledged.",
+				"checklistId, revision, taskId, status, note. dismiss: checklistId, revision, " +
+				"reason, anchorId, optional taskId; omit taskId to dismiss the whole list. " +
+				"replace: checklistId, revision, reason, anchorId, title, tasks[1-10]. ack: " +
+				"checklistId, revision, summary; sole tool call in its message. list: no other " +
+				"field. A model dismissal or replacement needs the anchorId of a user message " +
+				"after the current revision, appends a visible notice, and a replacement " +
+				"consumes a fresh pre_checklist receipt. Only the user holds or releases a list. " +
+				"The run cannot settle while tasks are unfinished or the current revision is " +
+				"unacknowledged.",
 			parameters: this.parameters.schema,
 			exposure: "model-only",
 			executionMode: "sequential",
@@ -104,6 +111,9 @@ export class ChecklistTool {
 				if (!command) return this.error("UNKNOWN_ACTION", `Unknown action: ${action}`);
 				const result = this.ledger.transition(command, ctx);
 				if (!result.ok) return this.fromFailure(result.details);
+				if (command.kind === "replace" || command.kind === "dismissTask" || command.kind === "dismissList") {
+					this.announce(this.transitionNotice(command, result.state ?? null), result.state ?? null, command.anchorId);
+				}
 				const details = result.details as MutationDetails;
 				const state = result.state;
 				const text = state
@@ -144,7 +154,65 @@ export class ChecklistTool {
 				actor: "model",
 			};
 		}
+		if (action === "dismiss") {
+			const common = {
+				checklistId: this.identifier(params.checklistId),
+				revision: Number(params.revision ?? 0),
+				reason: String(params.reason ?? ""),
+				anchorId: String(params.anchorId ?? ""),
+				actor: "model" as const,
+			};
+			const taskId = this.identifier(params.taskId);
+			return taskId ? { kind: "dismissTask", taskId, ...common } : { kind: "dismissList", ...common };
+		}
+		if (action === "replace") {
+			return {
+				kind: "replace",
+				checklistId: this.identifier(params.checklistId),
+				revision: Number(params.revision ?? 0),
+				title: String(params.title ?? ""),
+				tasks: Array.isArray(params.tasks) ? params.tasks.map(String) : [],
+				reason: String(params.reason ?? ""),
+				anchorId: String(params.anchorId ?? ""),
+				actor: "model",
+			};
+		}
 		return null;
+	}
+
+	/** The user-visible account of a model dismissal or replacement. */
+	private transitionNotice(command: TransitionCommand, state: ChecklistState | null): string {
+		if (command.kind === "replace") {
+			const created = state ? ` with checklist ${state.checklistId} revision ${state.revision}` : "";
+			return `Model replaced checklist ${command.checklistId} revision ${command.revision}${created} following user message ${command.anchorId}. Reason: ${command.reason}`;
+		}
+		if (command.kind === "dismissTask") {
+			return `Model dismissed task ${command.taskId} of checklist ${command.checklistId} revision ${command.revision} following user message ${command.anchorId}. Reason: ${command.reason}`;
+		}
+		if (command.kind === "dismissList") {
+			return `Model dismissed checklist ${command.checklistId} revision ${command.revision} following user message ${command.anchorId}. Reason: ${command.reason}`;
+		}
+		return "";
+	}
+
+	private announce(text: string, state: ChecklistState | null, anchorId: string): void {
+		if (!text) return;
+		this.pi.sendMessage(
+			{
+				customType: ChecklistContract.NOTICE_TYPE,
+				content: text,
+				display: true,
+				details: {
+					schema: SCHEMA,
+					kind: "notice",
+					anchorId,
+					checklistId: state?.checklistId ?? null,
+					revision: state?.revision ?? null,
+					reason: "model-transition",
+				},
+			},
+			{ triggerTurn: false },
+		);
 	}
 
 	/** An id as the model meant it; tool-call arguments can wrap it in one pair of quotes. */

@@ -36,7 +36,11 @@ export class PreChecklistTool {
 				"Call at the start of every new checklist. Returns the pi-checklist " +
 				"contract: one list of at most ten coherent tasks, an acknowledgement " +
 				"at every task or turn end, and a run that cannot settle while tasks are " +
-				"unfinished or unacknowledged. Only the user can hold or dismiss the list.",
+				"unfinished or unacknowledged. Creating or replacing a list consumes a " +
+				"fresh receipt, so call this again before a replacement. The user holds, " +
+				"releases, and dismisses; the model may dismiss or replace only against " +
+				"the anchorId of a later user message that changed priorities, with a " +
+				"reason.",
 			promptGuidelines: this.contract.guidelines(),
 			parameters: Type.Object(
 				{

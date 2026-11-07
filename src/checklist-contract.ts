@@ -17,6 +17,7 @@ export type TaskStatus = "pending" | "in_progress" | "done" | "dismissed";
 export type ChecklistPhase = "open" | "held" | "completed" | "dismissed";
 export type ChecklistOperation =
 	| "create"
+	| "replace"
 	| "add"
 	| "update"
 	| "hold"
@@ -48,6 +49,15 @@ export interface ChecklistState {
 	holdReason: string | null;
 }
 
+/** The list a replacement displaced, kept readable in the event that replaced it. */
+export interface ReplacedChecklist {
+	checklistId: string;
+	revision: number;
+	title: string;
+	phase: "open" | "held";
+	holdReason: string | null;
+}
+
 /** A canonical, append-only snapshot transition. */
 export interface StateEvent {
 	schema: typeof SCHEMA;
@@ -58,6 +68,9 @@ export interface StateEvent {
 	reason: string | null;
 	preReceiptId: string | null;
 	ackReceiptEntryId: string | null;
+	/** The user message a model dismissal or replacement names as its authority. */
+	anchorId?: string | null;
+	replacedChecklist?: ReplacedChecklist | null;
 	state: ChecklistState;
 }
 
@@ -164,6 +177,7 @@ export interface Acknowledgement {
 export interface ChecklistView {
 	acknowledged: boolean;
 	state: ChecklistState | null;
+	stateEntryId: string | null;
 	fault: string | null;
 	preReceiptIds: string[];
 	branchPreReceiptIds: string[];
@@ -187,6 +201,17 @@ export class ChecklistContract {
 	static readonly STATE_TYPE = "pi-checklist-state";
 	static readonly SETTLE_TYPE = "pi-checklist-settle";
 	static readonly NOTICE_TYPE = "pi-checklist-notice";
+	static readonly OPERATIONS: readonly ChecklistOperation[] = [
+		"create",
+		"replace",
+		"add",
+		"update",
+		"hold",
+		"release",
+		"dismiss_task",
+		"dismiss_list",
+		"complete",
+	];
 
 	/** The model-facing catalogue returned by `pre_checklist`. */
 	catalogue(state: ChecklistState | null = null): string {
@@ -207,10 +232,14 @@ export class ChecklistContract {
 			"The run cannot settle while the list is open with unfinished tasks or a",
 			"missing acknowledgement. pi continues the run with a reminder, up to three",
 			"times per user turn and five times per list revision; at that limit the list is",
-			"reported unresolved and stays open for a later user turn. Only the user can",
-			"hold or dismiss a checklist, through /checklist-hold, /checklist-release,",
-			"and /checklist-dismiss. Never mark unfinished work done and never claim a",
-			"list is complete without acknowledging it.",
+			"reported unresolved and stays open for a later user turn. The user holds,",
+			"releases, and dismisses through /checklist-hold, /checklist-release, and",
+			"/checklist-dismiss. When a later user message changes priorities, dismiss or",
+			"replace the list yourself: pass a reason, the checklistId and revision you",
+			"read, and that message's anchorId, which must follow the current revision on",
+			"this branch. Either action appends a visible notice; a dismissal never means",
+			"the abandoned work was completed. Never mark unfinished work done and never",
+			"claim a list is complete without acknowledging it.",
 			"",
 			"Checklist state is stored in the session branch, so compaction, reload,",
 			"resume, and /tree navigation preserve the remaining tasks. When pi-consult",
@@ -226,7 +255,7 @@ export class ChecklistContract {
 		return [
 			"For any task with multiple steps, call pre_checklist at the start, create a checklist of at most ten coherent tasks, and acknowledge the refreshed list at every task or turn end with checklist action ack as the only tool call in that message.",
 			"Keep checklist task statuses current: done only with a completion note naming the evidence; never mark unfinished work done.",
-			"The run cannot settle while the list has unfinished tasks or lacks a current acknowledgement; finish the work and acknowledge it, or ask the user to /checklist-hold or /checklist-dismiss.",
+			"The run cannot settle while an open list has unfinished tasks or lacks a current acknowledgement: finish and acknowledge the work, ask the user to hold or dismiss it, or use dismiss or replace when a later user message changes priorities, naming that message's anchorId and a reason.",
 			"Checklist state lives in the session branch and survives compaction, reload, resume, and /tree navigation; when pi-consult is installed, acknowledge after the closing consultation result.",
 		];
 	}
@@ -241,7 +270,9 @@ export class ChecklistContract {
 			const note = task.note ? ` — ${task.note}` : "";
 			lines.push(`- [${task.status}] #${task.taskId} ${task.title}${note}`);
 		}
-		if (state.holdReason) lines.push(`Hold: ${state.holdReason}`);
+		if (state.holdReason) {
+			lines.push(state.phase === "dismissed" ? `Dismissed: ${state.holdReason}` : `Hold: ${state.holdReason}`);
+		}
 		lines.push(ackValid ? "Acknowledgement: current." : "Acknowledgement: required.");
 		return lines.join("\n");
 	}
@@ -270,7 +301,8 @@ export class ChecklistContract {
 			`Acknowledgement: ${ackValid ? "current" : "missing"}.`,
 			"Complete the remaining work, then call checklist with action ack as the only",
 			"tool call in its message after reviewing the results. Do not mark unfinished",
-			"work done. Only the user can hold or dismiss the list.",
+			"work done. Only the user holds or releases the list; a later user message that",
+			"changes priorities may justify dismiss or replace, with its anchorId.",
 		].join(" ");
 	}
 
@@ -280,8 +312,9 @@ export class ChecklistContract {
 		return [
 			"Checklist unresolved: automatic continuation limit reached.",
 			`${this.brief(state)} Missing: ${missing}.`,
-			"The list remains open. Continue in a new user turn, or use /checklist-hold",
-			"or /checklist-dismiss.",
+			"The list remains open. Continue in a new user turn, or ask the user to use",
+			"/checklist-hold or /checklist-dismiss; a later user message that changes",
+			"priorities may justify dismiss or replace with its anchorId and a reason.",
 		].join(" ");
 	}
 

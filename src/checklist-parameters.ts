@@ -13,7 +13,7 @@ import { Value } from "typebox/value";
 
 import { MAX_TASKS } from "./checklist-contract.ts";
 
-export type Action = "create" | "add" | "update" | "ack" | "list";
+export type Action = "create" | "add" | "update" | "dismiss" | "replace" | "ack" | "list";
 
 export class ChecklistParameters {
 	private readonly actions: Record<Action, TObject>;
@@ -36,6 +36,8 @@ export class ChecklistParameters {
 			]),
 			note: Type.String({ minLength: 1, maxLength: 2000 }),
 			summary: Type.String({ minLength: 1, maxLength: 2000 }),
+			reason: Type.String({ minLength: 1, maxLength: 2000 }),
+			anchorId: Type.String({ minLength: 1, maxLength: 100 }),
 		};
 		const actionFields: Record<Action, Record<string, TSchema>> = {
 			create: { title: fields.title, tasks: fields.tasks },
@@ -46,6 +48,21 @@ export class ChecklistParameters {
 				taskId: fields.taskId,
 				status: fields.status,
 				note: Type.Optional(fields.note),
+			},
+			dismiss: {
+				checklistId: fields.checklistId,
+				revision: fields.revision,
+				reason: fields.reason,
+				anchorId: fields.anchorId,
+				taskId: Type.Optional(fields.taskId),
+			},
+			replace: {
+				checklistId: fields.checklistId,
+				revision: fields.revision,
+				reason: fields.reason,
+				anchorId: fields.anchorId,
+				title: fields.title,
+				tasks: fields.tasks,
 			},
 			ack: { checklistId: fields.checklistId, revision: fields.revision, summary: fields.summary },
 			list: {},

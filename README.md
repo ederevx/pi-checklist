@@ -13,7 +13,7 @@ The state lives in the session branch, so compaction, reload, resume, and
 ## Install
 
 ```bash
-pi install git:github.com/ederevx/pi-checklist@v0.3.3
+pi install git:github.com/ederevx/pi-checklist@v0.3.4
 ```
 
 The package has no runtime dependencies; it uses the host-provided

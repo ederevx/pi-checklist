@@ -441,7 +441,8 @@ test("dismiss and replace refuse a missing reason or anchor", async () => {
 	assertEq(pi.messages.length, 0, "a refusal is never announced");
 });
 
-test("replace refuses a field the action does not declare", async () => {	const { pi, ctx } = setup();
+test("replace refuses a field the action does not declare", async () => {
+	const { pi, ctx } = setup();
 	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
 	const state = await list(pi, ctx);
 	const result = (await pi.tool("checklist", {

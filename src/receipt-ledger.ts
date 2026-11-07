@@ -327,7 +327,8 @@ export class ReceiptLedger {
 			typeof replaced.checklistId !== "string" ||
 			typeof replaced.revision !== "number" ||
 			typeof replaced.title !== "string" ||
-			(replaced.phase !== "open" && replaced.phase !== "held")
+			(replaced.phase !== "open" && replaced.phase !== "held") ||
+			(replaced.holdReason !== null && typeof replaced.holdReason !== "string")
 		) {
 			return null;
 		}
@@ -409,7 +410,7 @@ export class ReceiptLedger {
 				return "completion with unfinished tasks";
 			}
 		}
-		return this.modelDismissalIssue(step);
+		return this.dismissalIssue(step);
 	}
 
 	/** Rules for the transition that starts a list from nothing. */
@@ -437,6 +438,7 @@ export class ReceiptLedger {
 		if (previous.phase !== "open" && previous.phase !== "held") return "replacement over a closed checklist";
 		if (event.previousRevision !== previous.revision) return "replacement revision does not match the previous state";
 		if (state.revision !== 1 || state.phase !== "open") return "malformed replacement transition";
+		if (event.ackReceiptEntryId !== null) return "replacement carries a completion acknowledgement";
 		if (step.acceptedIds.includes(state.checklistId)) return "replacement reused a checklist identity";
 		if (!this.describes(step.event.replacedChecklist ?? null, previous)) {
 			return "replacement does not describe the checklist it replaced";
@@ -480,26 +482,31 @@ export class ReceiptLedger {
 		);
 	}
 
-	/** A model dismissal names the user message whose priorities it acts on. */
-	private modelDismissalIssue(step: ReplayStep): string | null {
+	/** A dismissal keeps the list's phase and hold, and carries the reason it took. */
+	private dismissalIssue(step: ReplayStep): string | null {
 		const { previous, event } = step;
-		if (event.actor !== "model") return null;
 		if (event.operation !== "dismiss_task" && event.operation !== "dismiss_list") return null;
-		if (previous === null) return "model dismissal has no previous checklist";
-		if (previous.phase !== "open" && previous.phase !== "held") return "model dismissal over a closed checklist";
-		if (!event.reason?.trim()) return "model dismissal has no reason";
-		const anchor = this.anchorIssue(step.branch, event.anchorId ?? null, step.index, step.previousIndex);
-		if (anchor) return anchor.message;
-		if (event.operation === "dismiss_task") {
-			if (event.state.phase !== previous.phase) return "model task dismissal changed the phase";
-			if (event.state.holdReason !== previous.holdReason) return "model task dismissal changed the hold reason";
-			const index = event.state.tasks.findIndex(
-				(task, position) => task.status === "dismissed" && previous.tasks[position]?.status !== "dismissed",
-			);
-			if (index < 0) return "model task dismissal changed no task";
-			if (event.state.tasks[index].note !== event.reason) return "model task dismissal does not carry its reason";
+		if (previous === null) return "dismissal has no previous checklist";
+		if (previous.phase !== "open" && previous.phase !== "held") return "dismissal over a closed checklist";
+		if (event.preReceiptId !== null || event.ackReceiptEntryId !== null) {
+			return "dismissal carries metadata it does not own";
 		}
-		return null;
+		const reason = event.reason?.trim();
+		if (!reason) return "dismissal has no reason";
+		if (event.actor === "model") {
+			const anchor = this.anchorIssue(step.branch, event.anchorId ?? null, step.index, step.previousIndex);
+			if (anchor) return anchor.message;
+		}
+		if (event.operation === "dismiss_list") {
+			return event.state.holdReason === reason ? null : "list dismissal does not carry its reason";
+		}
+		if (event.state.phase !== previous.phase) return "task dismissal changed the phase";
+		if (event.state.holdReason !== previous.holdReason) return "task dismissal changed the hold reason";
+		const index = event.state.tasks.findIndex(
+			(task, position) => task.status === "dismissed" && previous.tasks[position]?.status !== "dismissed",
+		);
+		if (index < 0) return "task dismissal changed no task";
+		return event.state.tasks[index].note === reason ? null : "task dismissal does not carry its reason";
 	}
 
 	/** The anchor must be a user message on this branch, after the current revision. */

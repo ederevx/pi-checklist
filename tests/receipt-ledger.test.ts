@@ -1,4 +1,4 @@
-import type { ChecklistDetails, ChecklistState } from "../src/checklist-contract.ts";
+import type { BranchEntry, ChecklistDetails, ChecklistState } from "../src/checklist-contract.ts";
 import { ReceiptLedger } from "../src/receipt-ledger.ts";
 import {
 	FakeContext,
@@ -365,7 +365,7 @@ test("a create that reuses a consumed receipt is invalid", () => {
 	const session = new FakeSession();
 	session.add(userEntry("u1"), preEntry("pre-1"));
 	session.add(stateEvent("e1", "create", null, makeState()));
-	session.add(stateEvent("e2", "dismiss_list", makeState(), makeState({ revision: 2, phase: "dismissed", holdReason: "gone" })));
+	session.add(stateEvent("e2", "dismiss_list", makeState(), makeState({ revision: 2, phase: "dismissed", holdReason: "gone" }), { reason: "gone" }));
 	session.add(stateEvent("e3", "create", null, makeState({ checklistId: "list-2", title: "Next" })));
 	const ledger = new ReceiptLedger(new FakePi(session) as never);
 	const view = ledger.fromContext(new FakeContext(session) as never);
@@ -656,4 +656,101 @@ test("a replacement that reuses the displaced identity is a fault", () => {
 	const view = ledger.fromContext(new FakeContext(session) as never);
 	assert(view.fault !== null, "a replacement needs a new identity");
 	assertIncludes(String(view.fault), "identity");
+});
+
+/** Replay a branch whose last transition is the one handed in, and report its fault. */
+function faultOf(transition: (previous: ChecklistState) => BranchEntry): string | null {
+	const session = new FakeSession();
+	const first = makeState();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, first));
+	session.add(userEntry("u2"));
+	session.add(preEntry("pre-2"));
+	session.add(transition(first));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	return ledger.fromContext(new FakeContext(session) as never).fault;
+}
+
+/** A replacement event that replays cleanly until the case under test spoils it. */
+function replacement(extra: Record<string, unknown> = {}) {
+	return (first: ChecklistState): BranchEntry =>
+		stateEvent("e2", "replace", first, makeState({ checklistId: "list-2" }), {
+			anchorId: "u2",
+			reason: "changed",
+			preReceiptId: "pre-pre-2",
+			replacedChecklist: {
+				checklistId: first.checklistId,
+				revision: first.revision,
+				title: first.title,
+				phase: "open",
+				holdReason: null,
+			},
+			...extra,
+		});
+}
+
+test("a replacement carrying a completion acknowledgement is a fault", () => {
+	const fault = faultOf(replacement({ ackReceiptEntryId: "ack-1" }));
+	assertIncludes(String(fault), "completion acknowledgement");
+});
+
+test("a malformed displaced snapshot is a fault", () => {
+	const fault = faultOf(
+		replacement({
+			replacedChecklist: { checklistId: "list-1", revision: 1, title: "Work", phase: "open", holdReason: 5 },
+		}),
+	);
+	assertIncludes(String(fault), "does not describe");
+});
+
+test("a list dismissal whose state disagrees with its reason is a fault", () => {
+	const fault = faultOf((first) =>
+		stateEvent("e2", "dismiss_list", first, makeState({ revision: 2, phase: "dismissed", holdReason: "other" }), {
+			reason: "gone",
+		}),
+	);
+	assertIncludes(String(fault), "does not carry its reason");
+});
+
+test("a dismissal carrying metadata it does not own is a fault", () => {
+	const fault = faultOf((first) =>
+		stateEvent("e2", "dismiss_list", first, makeState({ revision: 2, phase: "dismissed", holdReason: "gone" }), {
+			reason: "gone",
+			preReceiptId: "pre-pre-2",
+		}),
+	);
+	assertIncludes(String(fault), "metadata it does not own");
+});
+
+test("a task dismissal that changes the phase is a fault", () => {
+	const fault = faultOf((first) =>
+		stateEvent(
+			"e2",
+			"dismiss_task",
+			first,
+			makeState({
+				revision: 2,
+				phase: "held",
+				tasks: [{ taskId: "task-1", title: "first", status: "dismissed", note: "obsolete" }, first.tasks[1]],
+			}),
+			{ reason: "obsolete" },
+		),
+	);
+	assertIncludes(String(fault), "changed the phase");
+});
+
+test("a task dismissal whose note is not its reason is a fault", () => {
+	const fault = faultOf((first) =>
+		stateEvent(
+			"e2",
+			"dismiss_task",
+			first,
+			makeState({
+				revision: 2,
+				tasks: [{ taskId: "task-1", title: "first", status: "dismissed", note: "something else" }, first.tasks[1]],
+			}),
+			{ reason: "obsolete" },
+		),
+	);
+	assertIncludes(String(fault), "does not carry its reason");
 });

@@ -789,6 +789,29 @@ test("a replacement replayed with a non-user anchor is a fault", () => {
 	assertIncludes(String(fault), "does not name a user message");
 });
 
+test("a replacement replayed with an anchor from another branch is a fault", () => {
+	const first = makeState();
+	const shared = [
+		userEntry("u1"),
+		preEntry("pre-1"),
+		stateEvent("e1", "create", null, first),
+		preEntry("pre-2"),
+	];
+	const branch = [
+		...shared,
+		stateEvent("e2", "replace", first, makeState({ checklistId: "list-2" }), {
+			anchorId: "u2",
+			reason: "changed",
+			preReceiptId: "pre-pre-2",
+			replacedChecklist: { checklistId: "list-1", revision: 1, title: "Work", phase: "open", holdReason: null },
+		}),
+	];
+	const session = new FakeSession();
+	session.setBranch(branch, [...shared, userEntry("u2", "from a sibling branch")]);
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	assertIncludes(String(ledger.fromContext(new FakeContext(session) as never).fault), "names no entry on this branch");
+});
+
 test("a replacement replayed with an anchor later than itself is a fault", () => {
 	const session = new FakeSession();
 	const first = makeState();

@@ -74,19 +74,23 @@ test("one multi-step activity runs from pre_checklist to completion", async () =
 	assertEq(result.entries[0].data?.state.phase, "completed");
 });
 
-test("an unfinished activity cannot outrun the continuation budget", async () => {
+test("an unfinished activity settles unresolved and keeps the list open", async () => {
 	const { pi, ctx, session } = setup();
 	session.add(userEntry("u1"), preEntry("pre-1"));
 	await pi.tool("checklist", { action: "create", title: "Ship", tasks: ["build"] }, ctx);
-	for (let attempt = 0; attempt < 4; attempt += 1) {
-		const result = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as {
-			entries: unknown[];
-			continue?: boolean;
-		};
-		if (attempt < 3) assertEq(result.continue, true);
-		else assertEq(result?.continue, undefined);
-		appendDrafts(session, result?.entries ?? []);
-	}
+	const first = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as {
+		entries: unknown[];
+		continue?: boolean;
+	};
+	assertEq(first.continue, undefined);
+	appendDrafts(session, first.entries);
+	const second = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as {
+		entries: unknown[];
+		continue?: boolean;
+	};
+	assertEq(second?.continue, undefined);
+	const view = (await pi.tool("checklist", { action: "list" }, ctx)) as { details: { state: { phase: string } } };
+	assertEq(view.details.state.phase, "open");
 });
 
 test("a checklist change forces a fresh acknowledgement", async () => {
@@ -122,8 +126,12 @@ test("a checklist change forces a fresh acknowledgement", async () => {
 		},
 	});
 	view = (await pi.tool("checklist", { action: "list" }, ctx)) as typeof view;
-	const result = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as { continue?: boolean };
-	assertEq(result.continue, true);
+	const result = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as {
+		continue?: boolean;
+		entries: Array<{ content?: string }>;
+	};
+	assertEq(result.continue, undefined, "settlement is never forced");
+	assert(String(result.entries[1].content).includes("still open"));
 });
 
 test("a replacement needs its own acknowledgement before the run can settle", async () => {
@@ -164,8 +172,12 @@ test("a replacement needs its own acknowledgement before the run can settle", as
 		status: "done",
 		note: "read",
 	}, ctx);
-	const blocked = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as { continue?: boolean };
-	assertEq(blocked.continue, true, "every task is done, so only the displaced acknowledgement blocks");
+	const blocked = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as {
+		continue?: boolean;
+		entries: Array<{ content?: string }>;
+	};
+	assertEq(blocked.continue, undefined, "settlement is never forced");
+	assert(String(blocked.entries[1].content).includes("missing acknowledgement"));
 	view = (await pi.tool("checklist", { action: "list" }, ctx)) as View;
 	ackPair(session.entries, view.details.state.checklistId, view.details.state.revision, 2);
 	const settled = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as { continue?: boolean };

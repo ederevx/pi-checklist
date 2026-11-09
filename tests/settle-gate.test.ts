@@ -44,14 +44,14 @@ function open(session: FakeSession, overrides: Partial<ChecklistState> = {}): vo
 	session.add(userEntry("u1"), preEntry("pre-1"), stateEvent("e1", "create", null, state(overrides)));
 }
 
-test("aborts and errors never continue", () => {
+test("aborts and errors never report", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
 	assertEq(gate.decide(boundary("aborted") as never, ctx as never), undefined);
 	assertEq(gate.decide(boundary("error") as never, ctx as never), undefined);
 });
 
-test("no list or a held/dismissed list never continues", () => {
+test("no list or a held/dismissed list never reports", () => {
 	const { session, gate, ctx } = setup();
 	assertEq(gate.decide(boundary() as never, ctx as never), undefined);
 	open(session);
@@ -59,27 +59,29 @@ test("no list or a held/dismissed list never continues", () => {
 	assertEq(gate.decide(boundary() as never, ctx as never), undefined);
 });
 
-test("an unfinished list requests one continuation with a hidden notice", () => {
+test("an unfinished list settles with a visible notice and no continuation", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
 	const result = gate.decide(boundary() as never, ctx as never) as {
-		continue: boolean;
-		entries: Array<{ type: string; customType?: string; display?: boolean }>;
+		continue?: boolean;
+		entries: Array<{ type: string; customType?: string; display?: boolean; content?: string }>;
 	};
-	assertEq(result.continue, true);
+	assertEq(result.continue, undefined);
 	assertEq(result.entries.length, 2);
 	assertEq(result.entries[0].customType, "pi-checklist-settle");
 	assertEq(result.entries[1].customType, "pi-checklist-notice");
-	assertEq(result.entries[1].display, false);
+	assertEq(result.entries[1].display, true);
+	assert(String(result.entries[1].content).includes("still open"));
+	assert(String(result.entries[1].content).includes("#t1 one"));
 });
 
-test("finished tasks without an acknowledgement continue for the acknowledgement", () => {
+test("finished tasks without an acknowledgement report the missing acknowledgement", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
 	session.add(stateEvent("e2", "update", state(), state({ revision: 2, tasks: [{ taskId: "t1", title: "one", status: "done", note: "ok" }] })));
-	const result = gate.decide(boundary() as never, ctx as never) as { continue: boolean; entries: Array<{ content?: string }> };
-	assertEq(result.continue, true);
-	assert(String(result.entries[1].content).includes("Acknowledgement: missing"));
+	const result = gate.decide(boundary() as never, ctx as never) as { continue?: boolean; entries: Array<{ content?: string }> };
+	assertEq(result.continue, undefined);
+	assert(String(result.entries[1].content).includes("missing acknowledgement"));
 });
 
 test("a finished and acknowledged list completes without continuing", () => {
@@ -98,65 +100,27 @@ test("a finished and acknowledged list completes without continuing", () => {
 	assertEq(result.entries[0].data?.state.revision, 3);
 });
 
-test("another extension's continuation is not charged or duplicated", () => {
+test("another extension's continuation is left alone", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
 	assertEq(gate.decide(boundary("completed", { continue: true }) as never, ctx as never), undefined);
 });
 
-test("three continuations per anchor exhaust the budget", () => {
-	const { session, gate, ctx } = setup();
-	open(session);
-	for (let index = 1; index <= 3; index += 1) {
-		session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
-	}
-	const result = gate.decide(boundary() as never, ctx as never) as {
-		continue?: boolean;
-		entries: Array<{ display?: boolean; content?: string; customType?: string }>;
-	};
-	assertEq(result.continue, undefined);
-	assertEq(result.entries[1].display, true);
-	assert(String(result.entries[1].content).includes("limit reached"));
-});
-
-test("five continuations for one revision exhaust it across anchors", () => {
-	const { session, gate, ctx } = setup();
-	open(session);
-	for (let index = 1; index <= 3; index += 1) session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
-	for (let index = 4; index <= 5; index += 1) session.add(settleEntry(`s${index}`, "u2", "list-1", 1, "continue"));
-	session.add(userEntry("u3"));
-	const result = gate.decide(boundary() as never, ctx as never) as { continue?: boolean };
-	assertEq(result.continue, undefined);
-});
-
-test("a new user anchor resets the continuation budget", () => {
-	const { session, gate, ctx } = setup();
-	open(session);
-	for (let index = 1; index <= 3; index += 1) {
-		session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
-	}
-	session.add(userEntry("u2"));
-	const result = gate.decide(boundary() as never, ctx as never) as { continue?: boolean };
-	assertEq(result.continue, true);
-});
-
-test("a final-assistant boundary continues by appending a runnable reminder", () => {
+test("a boundary the host cannot continue still reports the open list", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
 	const result = gate.decide(boundary("completed", { canContinue: false }) as never, ctx as never) as {
 		continue?: boolean;
 		entries: Array<{ display?: boolean; type?: string }>;
 	};
-	assertEq(result.continue, true);
+	assertEq(result.continue, undefined);
 	assertEq(result.entries[1].type, "custom_message");
+	assertEq(result.entries[1].display, true);
 });
 
 test("a duplicate unresolved notice is not appended again", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
-	for (let index = 1; index <= 3; index += 1) {
-		session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
-	}
 	const first = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ details?: { reason: string } }> };
 	const notice = first.entries[1] as {
 		type: string;
@@ -200,36 +164,20 @@ test("earlier boundary drafts are preserved", () => {
 	assertEq(result.entries.length, 3);
 });
 
-test("the per-anchor cap is enforced across revisions", () => {
-	const { session, gate, ctx, ledger } = setup();
-	session.add(userEntry("u1"), preEntry("pre-1"));
-	ledger.transition({ kind: "create", title: "Work", tasks: ["one"], actor: "model" }, ctx as never);
-	let state = ledger.fromContext(ctx as never).state as ChecklistState;
-	ledger.transition(
-		{ kind: "update", checklistId: state.checklistId, revision: state.revision, taskId: state.tasks[0].taskId, status: "in_progress", actor: "model" },
-		ctx as never,
-	);
-	state = ledger.fromContext(ctx as never).state as ChecklistState;
-	ledger.transition(
-		{ kind: "update", checklistId: state.checklistId, revision: state.revision, taskId: state.tasks[0].taskId, status: "pending", actor: "model" },
-		ctx as never,
-	);
-	const current = ledger.fromContext(ctx as never).state as ChecklistState;
-	assertEq(current.revision, 3);
-	session.add(
-		settleEntry("s1", "u1", current.checklistId, 1, "continue"),
-		settleEntry("s2", "u1", current.checklistId, 2, "continue"),
-		settleEntry("s3", "u1", current.checklistId, 3, "continue"),
-	);
-	const result = gate.decide(boundary() as never, ctx as never) as { continue?: boolean };
-	assertEq(result.continue, undefined);
-});
-
-test("a second user anchor receives its own unresolved warning", () => {
+test("recorded continuations from an older ledger are read, not replayed", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
-	ackPair(session.entries, "list-1", 1, 1);
-	for (let index = 1; index <= 3; index += 1) session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
+	for (let index = 1; index <= 3; index += 1) {
+		session.add(settleEntry(`s${index}`, "u1", "list-1", 1, "continue"));
+	}
+	const result = gate.decide(boundary() as never, ctx as never) as { continue?: boolean; entries: unknown[] };
+	assertEq(result.continue, undefined);
+	assertEq(result.entries.length, 2);
+});
+
+test("a second user anchor receives its own unresolved notice", () => {
+	const { session, gate, ctx } = setup();
+	open(session);
 	const first = gate.decide(boundary() as never, ctx as never) as { entries: unknown[] };
 	const notice = first.entries[1] as { content: string; customType: string; display: boolean; details: unknown };
 	session.add({
@@ -242,11 +190,10 @@ test("a second user anchor receives its own unresolved warning", () => {
 	});
 	session.add(userEntry("u2"));
 	session.add(stateEvent("e2", "update", state(), state({ revision: 2, tasks: [{ taskId: "t1", title: "one", status: "in_progress", note: null }] })));
-	for (let index = 1; index <= 3; index += 1) session.add(settleEntry(`u2-${index}`, "u2", "list-1", 2, "continue"));
 	const second = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ display?: boolean; content?: string }> } | undefined;
-	assert(second !== undefined, "a new anchor should warn again");
+	assert(second !== undefined, "a new anchor should report again");
 	assertEq(second.entries[1].display, true);
-	assert(String(second.entries[1].content).includes("limit reached"));
+	assert(String(second.entries[1].content).includes("still open"));
 });
 
 test("a null-state fault deduplicates under the same anchor", () => {

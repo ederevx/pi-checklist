@@ -54,7 +54,7 @@ test("describe renders statuses, notes, holds, and acknowledgement freshness", (
 
 test("unresolved notice names the missing condition", () => {
 	const state = makeState();
-	assertIncludes(contract.unresolvedNotice(state, "attempt_cap", false), "limit reached");
-	assertIncludes(contract.unresolvedNotice(state, "attempt_cap", false), "missing acknowledgement");
+	assertIncludes(contract.unresolvedNotice(state, "missing_ack", false), "settled with this list still open");
+	assertIncludes(contract.unresolvedNotice(state, "missing_ack", false), "missing acknowledgement");
 	assertIncludes(contract.unresolvedNotice(state, "unfinished", true), "remaining tasks");
 });

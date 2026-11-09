@@ -15,8 +15,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import {
 	ChecklistContract,
 	CONTRACT_VERSION,
-	MAX_CONTINUATIONS_PER_ANCHOR,
-	MAX_CONTINUATIONS_PER_REVISION,
 	MAX_TASKS,
 	SCHEMA,
 	type Acknowledgement,
@@ -171,17 +169,6 @@ export class ReceiptLedger {
 		const active = state !== null && (state.phase === "open" || state.phase === "held");
 		const ackValid = active && validAck !== undefined;
 
-		let continuationsForAnchor = 0;
-		let continuationsForRevision = 0;
-		for (const entry of branch) {
-			const settle = this.settleEvent(entry);
-			if (!settle || settle.decision !== "continue") continue;
-			if (settle.anchorId === anchorId) continuationsForAnchor += 1;
-			if (state && settle.checklistId === state.checklistId && settle.revision === state.revision) {
-				continuationsForRevision += 1;
-			}
-		}
-
 		return {
 			acknowledged: preReceiptIds.length > 0,
 			branchPreReceiptIds,
@@ -194,8 +181,6 @@ export class ReceiptLedger {
 			ack,
 			ackValid,
 			anchorId,
-			continuationsForAnchor,
-			continuationsForRevision,
 			notices: this.notices(branch),
 		};
 	}

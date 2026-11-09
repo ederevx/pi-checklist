@@ -1,10 +1,10 @@
 /**
  * pi-checklist — settlement enforcement.
  *
- * One `agent_before_settle` handler owns the decision to continue, complete, or
- * report the list unresolved. Continuations are bounded per user anchor and
- * per revision, so an unfinished checklist is forced forward without letting a
- * model loop forever. Aborts and errors never consume the budget.
+ * One `agent_before_settle` handler owns the report of an open list. It never
+ * forces a continuation: the model decides when a run continues, and a list
+ * left open settles with a visible notice for a later turn. Aborts and errors
+ * pass through untouched.
  */
 
 import { randomUUID } from "node:crypto";
@@ -19,8 +19,6 @@ import type {
 
 import {
 	ChecklistContract,
-	MAX_CONTINUATIONS_PER_ANCHOR,
-	MAX_CONTINUATIONS_PER_REVISION,
 	SCHEMA,
 	type ChecklistState,
 	type ChecklistView,
@@ -62,42 +60,10 @@ export class SettleGate {
 			if (!completion) return undefined;
 			return { entries: [...event.entries, completion.draft as SessionBoundaryDraft] };
 		}
-		// Another extension already owns a continuation for this boundary; do not
-		// charge this checklist and let the next boundary decide.
+		// Another extension already owns this boundary; leave its decision alone.
 		if (event.continue) return undefined;
-		const overBudget =
-			view.continuationsForAnchor >= MAX_CONTINUATIONS_PER_ANCHOR ||
-			view.continuationsForRevision >= MAX_CONTINUATIONS_PER_REVISION;
-		if (overBudget) return this.unresolved(event, view, state, "attempt_cap");
 		const reason: SettleReason = allTerminal ? "missing_ack" : "unfinished";
-		return this.continuation(event, view, state, reason);
-	}
-
-	private continuation(
-		event: AgentBeforeSettleEvent,
-		view: ChecklistView,
-		state: ChecklistState,
-		reason: SettleReason,
-	): BoundaryResult {
-		const audit = this.audit(view, state, "continue", reason);
-		const notice: SessionBoundaryDraft = {
-			type: "custom_message",
-			customType: ChecklistContract.NOTICE_TYPE,
-			content: this.contract.continuationNotice(state, view.ackValid),
-			display: false,
-			details: {
-				schema: SCHEMA,
-				kind: "notice",
-				anchorId: view.anchorId,
-				checklistId: state.checklistId,
-				revision: state.revision,
-				reason,
-			},
-		};
-		return {
-			entries: [...event.entries, audit, notice],
-			continue: true,
-		};
+		return this.unresolved(event, view, state, reason);
 	}
 
 	private unresolved(

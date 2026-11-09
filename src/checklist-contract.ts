@@ -10,8 +10,6 @@
 export const CONTRACT_VERSION = 1;
 export const SCHEMA = 1;
 export const MAX_TASKS = 10;
-export const MAX_CONTINUATIONS_PER_ANCHOR = 3;
-export const MAX_CONTINUATIONS_PER_REVISION = 5;
 
 export type TaskStatus = "pending" | "in_progress" | "done" | "dismissed";
 export type ChecklistPhase = "open" | "held" | "completed" | "dismissed";
@@ -29,7 +27,6 @@ export type ChecklistActor = "model" | "user" | "gate";
 export type SettleReason =
 	| "unfinished"
 	| "missing_ack"
-	| "attempt_cap"
 	| "cannot_continue"
 	| "state_fault";
 
@@ -74,7 +71,7 @@ export interface StateEvent {
 	state: ChecklistState;
 }
 
-/** A settlement decision, persisted so continuation budgets survive reloads. */
+/** A settlement decision, persisted so the report of it survives reloads. */
 export interface SettleEvent {
 	schema: typeof SCHEMA;
 	eventId: string;
@@ -186,8 +183,6 @@ export interface ChecklistView {
 	ack: Acknowledgement | null;
 	ackValid: boolean;
 	anchorId: string | null;
-	continuationsForAnchor: number;
-	continuationsForRevision: number;
 	notices: NoticeDetails[];
 }
 
@@ -229,10 +224,11 @@ export class ChecklistContract {
 			"tasks may share one acknowledgement, but work performed after an",
 			"acknowledgement invalidates it.",
 			"",
-			"The run cannot settle while the list is open with unfinished tasks or a",
-			"missing acknowledgement. pi continues the run with a reminder, up to three",
-			"times per user turn and five times per list revision; at that limit the list is",
-			"reported unresolved and stays open for a later user turn. The user holds,",
+			"Settlement is never forced. If a turn ends while the list is open with",
+			"unfinished tasks or a missing acknowledgement, the run settles and a visible",
+			"notice reports what is left; the list stays open for a later turn. Continue in",
+			"a turn whenever the remaining work is yours to do, and end it when the rest",
+			"needs a user decision. The user holds,",
 			"releases, and dismisses through /checklist-hold, /checklist-release, and",
 			"/checklist-dismiss. When a later user message changes priorities, dismiss or",
 			"replace the list yourself: pass a reason, the checklistId and revision you",
@@ -255,7 +251,7 @@ export class ChecklistContract {
 		return [
 			"For any task with multiple steps, call pre_checklist at the start, create a checklist of at most ten coherent tasks, and acknowledge the refreshed list at every task or turn end with checklist action ack as the only tool call in that message.",
 			"Keep checklist task statuses current: done only with a completion note naming the evidence; never mark unfinished work done.",
-			"The run cannot settle while an open list has unfinished tasks or lacks a current acknowledgement: finish and acknowledge the work, ask the user to hold or dismiss it, or use dismiss or replace when a later user message changes priorities, naming that message's anchorId and a reason.",
+			"Leave a list open only deliberately: an unfinished list at the end of a turn is reported unresolved and stays open for a later turn, because settlement is never forced - continue on your own judgement and stop when the rest needs a user decision; use dismiss or replace when a later user message changes priorities, naming its anchorId and a reason.",
 			"Checklist state lives in the session branch and survives compaction, reload, resume, and /tree navigation; when pi-consult is installed, acknowledge after the closing consultation result.",
 		];
 	}
@@ -289,32 +285,16 @@ export class ChecklistContract {
 		return "Call pre_checklist (acknowledge: true) once in this session before creating or changing a checklist.";
 	}
 
-	/** Reminder the settle gate appends when the run must continue. */
-	continuationNotice(state: ChecklistState, ackValid: boolean): string {
-		const remaining = state.tasks
-			.filter((task) => task.status !== "done" && task.status !== "dismissed")
-			.map((task) => `#${task.taskId} ${task.title} [${task.status}]`)
-			.join("; ");
-		return [
-			`Checklist ${state.checklistId} revision ${state.revision} is still open.`,
-			`Remaining tasks: ${remaining || "none"}.`,
-			`Acknowledgement: ${ackValid ? "current" : "missing"}.`,
-			"Complete the remaining work, then call checklist with action ack as the only",
-			"tool call in its message after reviewing the results. Do not mark unfinished",
-			"work done. Only the user holds or releases the list; a later user message that",
-			"changes priorities may justify dismiss or replace, with its anchorId.",
-		].join(" ");
-	}
-
-	/** Visible text when the continuation budget is exhausted. */
+	/** Visible text when a run settles with its list still open. */
 	unresolvedNotice(state: ChecklistState, reason: SettleReason, ackValid: boolean): string {
 		const missing = reason === "missing_ack" || !ackValid ? "missing acknowledgement" : "remaining tasks";
 		return [
-			"Checklist unresolved: automatic continuation limit reached.",
+			"Checklist unresolved: the run settled with this list still open.",
 			`${this.brief(state)} Missing: ${missing}.`,
-			"The list remains open. Continue in a new user turn, or ask the user to use",
-			"/checklist-hold or /checklist-dismiss; a later user message that changes",
-			"priorities may justify dismiss or replace with its anchorId and a reason.",
+			"The list remains open and no continuation was forced. Resume it in a later",
+			"turn, or ask the user to use /checklist-hold or /checklist-dismiss; a later",
+			"user message that changes priorities may justify dismiss or replace with its",
+			"anchorId and a reason.",
 		].join(" ");
 	}
 

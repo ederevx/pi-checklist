@@ -53,8 +53,8 @@ export class ChecklistTool {
 				"field. A model dismissal or replacement needs the anchorId of a user message " +
 				"after the current revision, appends a visible notice, and a replacement " +
 				"consumes a fresh pre_checklist receipt. Only the user holds or releases a list. " +
-				"The run cannot settle while tasks are unfinished or the current revision is " +
-				"unacknowledged.",
+				"A list left open at the end of a turn is reported and stays open; no " +
+				"continuation is forced.",
 			parameters: this.parameters.schema,
 			exposure: "model-only",
 			executionMode: "sequential",

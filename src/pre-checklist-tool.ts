@@ -35,8 +35,8 @@ export class PreChecklistTool {
 			description:
 				"Call at the start of every new checklist. Returns the pi-checklist " +
 				"contract: one list of at most ten coherent tasks, an acknowledgement " +
-				"at every task or turn end, and a run that cannot settle while tasks are " +
-				"unfinished or unacknowledged. Creating or replacing a list consumes a " +
+				"at every task or turn end, and a run that never forces a continuation: an " +
+				"open list at the end of a turn is reported and stays open. Creating or replacing a list consumes a " +
 				"fresh receipt, so call this again before a replacement. The user holds, " +
 				"releases, and dismisses; the model may dismiss or replace only against " +
 				"the anchorId of a later user message that changed priorities, with a " +

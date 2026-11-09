@@ -1,11 +1,12 @@
 # pi-checklist
 
-Branch-persistent task checklists for the [pi](https://pi.dev) coding agent, with
-bounded settlement enforcement. A multi-step activity is kept on a list of at
-most ten tasks; the agent acknowledges the refreshed list at every task or
-turn end, and the run cannot settle while work remains or the current revision
-is unacknowledged. The user holds, releases, or dismisses a list; the model
-may dismiss or replace one when a later user instruction changes priorities.
+Branch-persistent task checklists for the [pi](https://pi.dev) coding agent. A
+multi-step activity is kept on a list of at most ten tasks; the agent
+acknowledges the refreshed list at every task or turn end, and a list left
+open at the end of a turn is reported as unresolved and stays open for a later
+turn. Settlement is never forced: the agent decides when to continue. The user
+holds, releases, or dismisses a list; the model may dismiss or replace one when
+a later user instruction changes priorities.
 
 The state lives in the session branch, so compaction, reload, resume, and
 `/tree` navigation preserve the remaining tasks.
@@ -87,11 +88,11 @@ user message, and follows every non-checklist tool result and list change. A
 delivered consultation result counts as later work; acknowledge after it.
 
 At `agent_before_settle`, an open list with unfinished tasks or a missing
-acknowledgement appends a hidden reminder and requests one more model turn.
-The budget is three continuations per user turn and five per list revision. At
-the limit the list is reported unresolved and stays open for a later user turn.
-Aborts and errors never consume the budget, and a hold or dismissal waives
-settlement enforcement immediately.
+acknowledgement appends a visible notice naming what is left. Settlement is
+never forced: the run ends, and the list stays open for a later turn. Continue
+in a turn whenever the remaining work is yours to do, and end the turn when the
+rest needs a user decision. Aborts and errors pass through untouched, and a
+hold or dismissal waives the report immediately.
 
 ## Persistence
 
@@ -99,7 +100,7 @@ Canonical state transitions are custom session entries; the catalogue
 acknowledgement and the model's acknowledgements are tool receipts. The view is
 rebuilt from the active branch on every call, never from a compaction summary.
 Compaction re-injects the current list into model context, and `/tree` restores
-the selected branch's tasks, holds, and remaining continuation budget.
+the selected branch's tasks and holds.
 
 A malformed or unsupported canonical record is surfaced as a state fault rather
 than silently treated as an empty list.

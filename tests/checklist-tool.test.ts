@@ -273,6 +273,58 @@ test("an undeclared field is named in the refusal", async () => {
 	assertIncludes(result.details.message ?? "", 'action "add"');
 });
 
+test("a completed task is removed to free a place; an unfinished one is refused", async () => {
+	const { pi, ctx } = setup();
+	await pi.tool("checklist", {
+		action: "create",
+		title: "Work",
+		tasks: ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
+	}, ctx);
+	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { state: { checklistId: string; revision: number; tasks: Array<{ taskId: string }> } };
+	}).details.state;
+	const unfinished = (await pi.tool("checklist", {
+		action: "remove",
+		checklistId: state.checklistId,
+		revision: state.revision,
+		taskId: state.tasks[0].taskId,
+	}, ctx)) as { details: { kind: string; code?: string } };
+	assertEq(unfinished.details.kind, "error");
+	assertEq(unfinished.details.code, "TASK_NOT_DONE");
+	await pi.tool("checklist", {
+		action: "update",
+		checklistId: state.checklistId,
+		revision: state.revision,
+		taskId: state.tasks[0].taskId,
+		status: "done",
+		note: "ran the suite",
+	}, ctx);
+	const done = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { state: { checklistId: string; revision: number; tasks: Array<{ taskId: string }> } };
+	}).details.state;
+	const removed = (await pi.tool("checklist", {
+		action: "remove",
+		checklistId: done.checklistId,
+		revision: done.revision,
+		taskId: done.tasks[0].taskId,
+	}, ctx)) as { details: { kind: string; revision: number }; content: Array<{ text: string }> };
+	assertEq(removed.details.kind, "mutation");
+	assertEq(removed.details.revision, done.revision + 1);
+	assertIncludes(removed.content[0].text, "Acknowledgement: required.");
+	const after = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { state: { revision: number; tasks: Array<{ taskId: string }> } };
+	}).details.state;
+	assertEq(after.tasks.length, 9);
+	assert(!after.tasks.some((task) => task.taskId === done.tasks[0].taskId), "the removed record is gone");
+	const readded = (await pi.tool("checklist", {
+		action: "add",
+		checklistId: done.checklistId,
+		revision: after.revision,
+		title: "eleven",
+	}, ctx)) as { details: { kind: string } };
+	assertEq(readded.details.kind, "mutation");
+});
+
 test("an action name outside the declared set has no schema", () => {
 	const parameters = new ChecklistParameters();
 	assert(parameters.schemaFor("create") !== null, "a declared action must resolve");

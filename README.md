@@ -43,15 +43,17 @@ that work.
 |---|---|
 | `pre_checklist` | Acknowledge the contract for the session and return the catalogue; refuses nested calls. |
 | `checklist create` | Start a list with 1–10 tasks. Refused while another list is open or held; use `replace`. |
-| `checklist add` | Append one task. Ten task records are the hard maximum, including done and dismissed tasks. |
+| `checklist add` | Append one task. Ten task records are the hard maximum, including done and dismissed tasks; `remove` frees a place. |
 | `checklist update` | Set a task's status and note. `done` requires a note. |
+| `checklist remove` | Drop a completed task's record to make room for another; an unfinished task is refused, and a list keeps at least one task. |
 | `checklist dismiss` | Dismiss one task (`taskId`) or the whole list, citing a reason and the `anchorId` of the user message that changed priorities. |
 | `checklist replace` | Replace an open or held list with a new one atomically; consumes a fresh `pre_checklist` receipt. |
 | `checklist ack` | Acknowledge the current revision after reviewing the latest results. Sole tool call in its message. |
 | `checklist list` | Read the branch's current list. |
 
 Mutation parameters carry `checklistId` and the expected `revision`; a stale
-revision is refused and must be re-read with `list`. Dismissed tasks cannot be
+revision is refused and must be re-read with `list`. A field an action does not
+carry is refused by name. Dismissed tasks cannot be
 changed by the model, and no model action can force a list complete.
 
 ## User controls

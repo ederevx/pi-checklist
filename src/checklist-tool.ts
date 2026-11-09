@@ -46,7 +46,8 @@ export class ChecklistTool {
 			description:
 				"Manage the branch's task checklist. Each action takes only its own fields. " +
 				"create: title, tasks[1-10]. add: checklistId, revision, title. update: " +
-				"checklistId, revision, taskId, status, note. dismiss: checklistId, revision, " +
+				"checklistId, revision, taskId, status, note. remove: checklistId, revision, " +
+				"taskId of a done task, freeing its place in the list; dismiss: checklistId, revision, " +
 				"reason, anchorId, optional taskId; omit taskId to dismiss the whole list. " +
 				"replace: checklistId, revision, reason, anchorId, title, tasks[1-10]. ack: " +
 				"checklistId, revision, summary; sole tool call in its message. list: no other " +
@@ -151,6 +152,15 @@ export class ChecklistTool {
 				taskId: this.identifier(params.taskId),
 				status: String(params.status ?? "pending") as "pending" | "in_progress" | "done",
 				note: typeof params.note === "string" ? params.note : undefined,
+				actor: "model",
+			};
+		}
+		if (action === "remove") {
+			return {
+				kind: "removeTask",
+				checklistId: this.identifier(params.checklistId),
+				revision: Number(params.revision ?? 0),
+				taskId: this.identifier(params.taskId),
 				actor: "model",
 			};
 		}

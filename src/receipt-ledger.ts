@@ -53,6 +53,13 @@ export type TransitionCommand =
 			note?: string;
 			actor: "model";
 	  }
+	| {
+			kind: "removeTask";
+			checklistId: string;
+			revision: number;
+			taskId: string;
+			actor: "model";
+		}
 	| { kind: "hold"; reason: string; actor: "user" }
 	| { kind: "release"; actor: "user" }
 	| { kind: "dismissTask"; taskId: string; reason: string; actor: "user" }
@@ -545,7 +552,8 @@ export class ReceiptLedger {
 			event.operation === "create" ||
 			event.operation === "replace" ||
 			event.operation === "add" ||
-			event.operation === "update"
+			event.operation === "update" ||
+			event.operation === "remove_task"
 		) {
 			return event.actor === "model";
 		}
@@ -572,6 +580,16 @@ export class ReceiptLedger {
 			const added = next.tasks[next.tasks.length - 1];
 			if (added.status !== "pending" || added.note !== null) return "added task is not pending and empty";
 			return null;
+		}
+		if (event.operation === "remove_task") {
+			if (next.tasks.length !== previous.tasks.length - 1) return "removal did not drop exactly one task";
+			const kept = new Set(next.tasks.map((task) => task.taskId));
+			const dropped = previous.tasks.filter((task) => !kept.has(task.taskId));
+			if (dropped.length !== 1) return "removal dropped no task";
+			if (dropped[0].status !== "done") return "removal dropped a task that was not done";
+			if (next.tasks.some((task) => task.status === "dismissed")) return "removal dropped the dismissed state";
+			const survivors = previous.tasks.filter((task) => task.taskId !== dropped[0].taskId);
+			return this.sameTasks(survivors, next.tasks) ? null : "removal changed a surviving task";
 		}
 		if (next.tasks.length !== previous.tasks.length) return "transition changed the task count";
 		if (!this.sameIdentities(previous.tasks, next.tasks)) return "transition changed task identities";
@@ -621,6 +639,7 @@ export class ReceiptLedger {
 		const reference = this.referenceIssue(state, command.checklistId, command.revision);
 		if (reference) return this.nextFailure(reference.code, reference.message);
 		if (command.kind === "add") return this.add(command, state);
+		if (command.kind === "removeTask") return this.removeTask(command, state);
 		return this.update(command, state);
 	}
 
@@ -705,6 +724,26 @@ export class ReceiptLedger {
 		);
 		const next: ChecklistState = { ...state, revision: state.revision + 1, tasks };
 		return this.mutation(this.event("update", "model", state, next, null));
+	}
+
+	private removeTask(
+		command: Extract<TransitionCommand, { kind: "removeTask" }>,
+		state: ChecklistState,
+	): NextTransition {
+		const index = state.tasks.findIndex((task) => task.taskId === command.taskId);
+		if (index < 0) return this.nextFailure("UNKNOWN_TASK", "No such task in this checklist.");
+		if (state.tasks[index].status !== "done") {
+			return this.nextFailure(
+				"TASK_NOT_DONE",
+				"Only a completed task can be removed; finish it, or dismiss it with a reason.",
+			);
+		}
+		if (state.tasks.length <= 1) {
+			return this.nextFailure("TASK_LIMIT", "A checklist keeps at least one task; dismiss the list instead.");
+		}
+		const tasks = state.tasks.filter((_task, position) => position !== index);
+		const next: ChecklistState = { ...state, revision: state.revision + 1, tasks };
+		return this.mutation(this.event("remove_task", "model", state, next, null));
 	}
 
 	private hold(command: Extract<TransitionCommand, { kind: "hold" }>, state: ChecklistState): NextTransition {

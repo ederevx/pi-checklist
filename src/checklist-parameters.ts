@@ -13,7 +13,15 @@ import { Value } from "typebox/value";
 
 import { MAX_TASKS } from "./checklist-contract.ts";
 
-export type Action = "create" | "add" | "update" | "dismiss" | "replace" | "ack" | "list";
+export type Action =
+	| "create"
+	| "add"
+	| "update"
+	| "remove"
+	| "dismiss"
+	| "replace"
+	| "ack"
+	| "list";
 
 export class ChecklistParameters {
 	private readonly actions: Record<Action, TObject>;
@@ -49,6 +57,11 @@ export class ChecklistParameters {
 				taskId: fields.taskId,
 				status: fields.status,
 				note: Type.Optional(fields.note),
+			},
+			remove: {
+				checklistId: fields.checklistId,
+				revision: fields.revision,
+				taskId: fields.taskId,
 			},
 			dismiss: {
 				checklistId: fields.checklistId,

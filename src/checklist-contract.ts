@@ -18,6 +18,7 @@ export type ChecklistOperation =
 	| "replace"
 	| "add"
 	| "update"
+	| "remove_task"
 	| "hold"
 	| "release"
 	| "dismiss_task"
@@ -201,6 +202,7 @@ export class ChecklistContract {
 		"replace",
 		"add",
 		"update",
+		"remove_task",
 		"hold",
 		"release",
 		"dismiss_task",
@@ -216,6 +218,8 @@ export class ChecklistContract {
 			"Use a checklist whenever a task has multiple steps. Call pre_checklist at the",
 			"start of each new checklist, then create one list of one to ten coherent",
 			"tasks. A list holds at most ten task records in total; an eleventh is rejected.",
+			"A completed task can be removed to make room for another: pass its taskId and",
+			"that action drops the record; unfinished tasks cannot be removed.",
 			"",
 			"Mark a task done only with a completion note that names the evidence. At",
 			"the end of every task or turn,",

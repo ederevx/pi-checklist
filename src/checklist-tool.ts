@@ -71,7 +71,7 @@ export class ChecklistTool {
 				const action = String(params.action ?? "");
 				const schema = this.parameters.schemaFor(action);
 				if (!schema) return this.error("UNKNOWN_ACTION", `Unknown action: ${action}`);
-				const invalid = this.parameters.invalid(schema, params);
+				const invalid = this.parameters.invalid(action, schema, params);
 				if (invalid) return this.error("INVALID_ARGS", invalid);
 				const view = this.ledger.fromContext(ctx);
 				if (action === "list") {

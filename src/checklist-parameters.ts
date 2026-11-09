@@ -17,6 +17,7 @@ export type Action = "create" | "add" | "update" | "dismiss" | "replace" | "ack"
 
 export class ChecklistParameters {
 	private readonly actions: Record<Action, TObject>;
+	private readonly fields: Record<Action, string[]>;
 	public readonly schema: TObject;
 
 	constructor() {
@@ -68,6 +69,9 @@ export class ChecklistParameters {
 			list: {},
 		};
 		const names = Object.keys(actionFields) as Action[];
+		this.fields = Object.fromEntries(
+			names.map((action) => [action, Object.keys(actionFields[action])]),
+		) as Record<Action, string[]>;
 		this.actions = Object.fromEntries(
 			names.map((action) => [
 				action,
@@ -92,7 +96,16 @@ export class ChecklistParameters {
 		return Object.hasOwn(this.actions, action) ? this.actions[action as Action] : null;
 	}
 
-	public invalid(schema: TObject, params: Record<string, unknown>): string | null {
+	public invalid(action: string, schema: TObject, params: Record<string, unknown>): string | null {
+		const accepted = this.fields[action as Action] ?? [];
+		const unexpected = Object.keys(params).filter(
+			(name) => name !== "action" && !accepted.includes(name),
+		);
+		if (unexpected.length > 0) {
+			const names = unexpected.map((name) => `"${name}"`).join(", ");
+			const verb = unexpected.length === 1 ? "is" : "are";
+			return `${names} ${verb} not accepted by action "${action}"`;
+		}
 		const [failure] = Value.Errors(schema, params);
 		if (!failure) return null;
 		return `${failure.path === "" ? "arguments" : failure.path}: ${failure.message}`;

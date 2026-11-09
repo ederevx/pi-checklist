@@ -258,6 +258,21 @@ test("the registered create schema accepts ten tasks and rejects eleven", () => 
 	assert(!Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: eleven }));
 });
 
+test("an undeclared field is named in the refusal", async () => {
+	const { pi, ctx } = setup();
+	const result = (await pi.tool("checklist", {
+		action: "add",
+		checklistId: "cl-1",
+		revision: 1,
+		title: "T",
+		tasks: ["x"],
+	}, ctx)) as { details: { kind: string; code?: string; message?: string } };
+	assertEq(result.details.kind, "error");
+	assertEq(result.details.code, "INVALID_ARGS");
+	assertIncludes(result.details.message ?? "", '"tasks"');
+	assertIncludes(result.details.message ?? "", 'action "add"');
+});
+
 test("an action name outside the declared set has no schema", () => {
 	const parameters = new ChecklistParameters();
 	assert(parameters.schemaFor("create") !== null, "a declared action must resolve");

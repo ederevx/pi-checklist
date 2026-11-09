@@ -291,10 +291,9 @@ export class ChecklistContract {
 		return [
 			"Checklist unresolved: the run settled with this list still open.",
 			`${this.brief(state)} Missing: ${missing}.`,
-			"The list remains open and no continuation was forced. Resume it in a later",
-			"turn, or ask the user to use /checklist-hold or /checklist-dismiss; a later",
-			"user message that changes priorities may justify dismiss or replace with its",
-			"anchorId and a reason.",
+			"The list remains open for a later turn. Resume it, or ask the user to use",
+			"/checklist-hold or /checklist-dismiss; a later user message that changes",
+			"priorities may justify dismiss or replace with its anchorId and a reason.",
 		].join(" ");
 	}
 

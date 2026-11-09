@@ -118,7 +118,7 @@ test("a boundary the host cannot continue still reports the open list", () => {
 	assertEq(result.entries[1].display, true);
 });
 
-test("a duplicate unresolved notice is not appended again", () => {
+test("a repeated settle reports the notice again without a second audit entry", () => {
 	const { session, gate, ctx } = setup();
 	open(session);
 	const first = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ details?: { reason: string } }> };
@@ -138,7 +138,22 @@ test("a duplicate unresolved notice is not appended again", () => {
 		display: notice.display,
 		details: notice.details,
 	});
-	assertEq(gate.decide(boundary() as never, ctx as never), undefined);
+	const second = gate.decide(boundary() as never, ctx as never) as {
+		entries: Array<{ customType?: string; display?: boolean }>;
+	};
+	assertEq(second.entries.length, 1, "only the notice repeats");
+	assertEq(second.entries[0].customType, "pi-checklist-notice");
+	assertEq(second.entries[0].display, true);
+});
+
+test("a repeated fault settle repeats its visible notice alone", () => {
+	const { session, gate, ctx } = setup();
+	session.add(userEntry("u1"));
+	session.add({ type: "custom", id: "bad", customType: "pi-checklist-state", data: { schema: 99 } });
+	const first = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ content: string; customType: string; display: boolean; details: unknown }> };
+	session.add({ type: "custom_message", id: "fault-notice", customType: first.entries[0].customType, content: first.entries[0].content, display: first.entries[0].display, details: first.entries[0].details });
+	const second = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ customType?: string }> };
+	assertEq(second.entries.length, 1);
 });
 
 test("a state fault is unresolved and visible", () => {
@@ -196,14 +211,11 @@ test("a second user anchor receives its own unresolved notice", () => {
 	assert(String(second.entries[1].content).includes("still open"));
 });
 
-test("a null-state fault deduplicates under the same anchor", () => {
+test("a null-state fault carries the anchor it reports under", () => {
 	const { session, gate, ctx } = setup();
 	session.add(userEntry("u1"));
 	session.add({ type: "custom", id: "bad", customType: "pi-checklist-state", data: { schema: 99 } });
 	const first = gate.decide(boundary() as never, ctx as never) as { entries: Array<{ display?: boolean; details?: { anchorId?: string } }> };
 	assertEq(first.entries[0].display, true);
 	assertEq(first.entries[0].details?.anchorId, "u1");
-	const notice = first.entries[0] as { content: string; customType: string; display: boolean; details: unknown };
-	session.add({ type: "custom_message", id: "fault-notice", customType: notice.customType, content: notice.content, display: notice.display, details: notice.details });
-	assertEq(gate.decide(boundary() as never, ctx as never), undefined);
 });

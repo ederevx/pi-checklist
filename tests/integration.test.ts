@@ -85,10 +85,12 @@ test("an unfinished activity settles unresolved and keeps the list open", async 
 	assertEq(first.continue, undefined);
 	appendDrafts(session, first.entries);
 	const second = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as {
-		entries: unknown[];
+		entries: Array<{ customType?: string; display?: boolean }>;
 		continue?: boolean;
 	};
 	assertEq(second?.continue, undefined);
+	assertEq(second.entries.length, 1, "the open list is still reported");
+	assertEq(second.entries[0].display, true);
 	const view = (await pi.tool("checklist", { action: "list" }, ctx)) as { details: { state: { phase: string } } };
 	assertEq(view.details.state.phase, "open");
 });

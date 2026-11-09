@@ -72,14 +72,15 @@ export class SettleGate {
 		state: ChecklistState | null,
 		reason: SettleReason,
 	): BoundaryResult | undefined {
-		const duplicate = view.notices.some(
+		// The audit entry records one decision per boundary state; the visible
+		// notice repeats on every later settle, so an open list stays reported.
+		const audited = view.notices.some(
 			(notice) =>
 				notice.anchorId === view.anchorId &&
 				notice.checklistId === (state?.checklistId ?? null) &&
 				notice.revision === (state?.revision ?? null) &&
 				notice.reason === reason,
 		);
-		if (duplicate) return undefined;
 		const text = !state
 			? `Checklist unresolved: ${view.fault ?? "the checklist state is unreadable"}.`
 			: reason === "state_fault"
@@ -88,7 +89,7 @@ export class SettleGate {
 					? `Checklist unresolved: the host cannot continue this run automatically. ${this.contract.brief(state)}`
 					: this.contract.unresolvedNotice(state, reason, view.ackValid);
 		const entries: SessionBoundaryDraft[] = [];
-		if (state) entries.push(this.audit(view, state, "unresolved", reason));
+		if (state && !audited) entries.push(this.audit(view, state, "unresolved", reason));
 		entries.push({
 			type: "custom_message",
 			customType: ChecklistContract.NOTICE_TYPE,

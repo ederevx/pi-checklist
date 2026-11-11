@@ -44,18 +44,18 @@ export class ChecklistTool {
 			name: "checklist",
 			label: "checklist",
 			description:
-				"Manage the branch's task checklist. Each action takes only its own fields. " +
-				"create: title, tasks[1-10]. add: checklistId, revision, title. update: " +
-				"checklistId, revision, taskId, status, note. remove: checklistId, revision, " +
-				"taskId of a done task, freeing its place in the list; dismiss: checklistId, revision, " +
-				"reason, anchorId, optional taskId; omit taskId to dismiss the whole list. " +
-				"replace: checklistId, revision, reason, anchorId, title, tasks[1-10]. ack: " +
-				"checklistId, revision, summary; sole tool call in its message. list: no other " +
-				"field. A model dismissal or replacement needs the anchorId of a user message " +
-				"after the current revision, appends a visible notice, and a replacement " +
-				"consumes a fresh pre_checklist receipt. Only the user holds or releases a list. " +
-				"A list left open at the end of a turn is reported and stays open; no " +
-				"continuation is forced.",
+				"Manage the branch's checklist for user-requested work. Each action accepts only its own " +
+				"fields. create: anchorId, title, tasks[1-10]. add: checklistId, revision, anchorId, " +
+				"title. replace: checklistId, revision, reason, anchorId, title, tasks[1-10]. These " +
+				"additions require the latest user prompt to follow the latest checklist revision; every " +
+				"new task must be necessary to complete that prompt. Batch initial tasks in create. " +
+				"update: checklistId, revision, taskId, status, optional note; done requires an evidence " +
+				"note. remove: checklistId, revision, taskId of a done task. dismiss: checklistId, " +
+				"revision, reason, anchorId, optional taskId; its user message must follow the current " +
+				"revision. ack: checklistId, revision, summary; sole tool call in its message. list: no " +
+				"other fields; returns the latest user anchor and task sources. Create and replace consume " +
+				"a fresh pre_checklist receipt. Only the user holds or releases a list. Settlement never " +
+				"forces continuation.",
 			parameters: this.parameters.schema,
 			exposure: "model-only",
 			executionMode: "sequential",
@@ -86,8 +86,12 @@ export class ChecklistTool {
 						acknowledged: view.acknowledged,
 						needsAck,
 						fault: view.fault,
+						anchorId: view.anchorId,
 					};
-					return this.success(this.describe(view.state, view.ackValid, view.fault), details);
+					const anchor = view.anchorId
+						? `Latest user message anchorId: ${view.anchorId}`
+						: "Latest user message anchorId: none";
+					return this.success(`${this.describe(view.state, view.ackValid, view.fault)}\n${anchor}`, details);
 				}
 				if (!view.acknowledged) {
 					return this.error("PRE_REQUIRED", this.contract.ackDenial());
@@ -132,6 +136,7 @@ export class ChecklistTool {
 				kind: "create",
 				title: String(params.title ?? ""),
 				tasks: Array.isArray(params.tasks) ? params.tasks.map(String) : [],
+				anchorId: this.identifier(params.anchorId),
 				actor: "model",
 			};
 		}
@@ -141,6 +146,7 @@ export class ChecklistTool {
 				checklistId: this.identifier(params.checklistId),
 				revision: Number(params.revision ?? 0),
 				title: String(params.title ?? ""),
+				anchorId: this.identifier(params.anchorId),
 				actor: "model",
 			};
 		}

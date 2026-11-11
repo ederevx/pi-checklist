@@ -32,7 +32,7 @@ import {
 } from "./checklist-contract.ts";
 
 export type TransitionCommand =
-	| { kind: "create"; title: string; tasks: string[]; actor: "model" }
+	| { kind: "create"; title: string; tasks: string[]; anchorId: string; actor: "model" }
 	| {
 			kind: "replace";
 			checklistId: string;
@@ -43,7 +43,7 @@ export type TransitionCommand =
 			anchorId: string;
 			actor: "model";
 	  }
-	| { kind: "add"; checklistId: string; revision: number; title: string; actor: "model" }
+	| { kind: "add"; checklistId: string; revision: number; title: string; anchorId: string; actor: "model" }
 	| {
 			kind: "update";
 			checklistId: string;
@@ -127,6 +127,7 @@ export class ReceiptLedger {
 		let state: ChecklistState | null = null;
 		let fault: string | null = null;
 		let stateIndex = -1;
+		let seenPolicy2 = false;
 
 		for (let index = 0; index < branch.length; index += 1) {
 			const entry = branch[index];
@@ -145,6 +146,11 @@ export class ReceiptLedger {
 			}
 			const event = read.event;
 			if (!event) continue;
+			if ((event.policyVersion ?? 1) === 1 && seenPolicy2) {
+				fault = "a historical transition follows a current one";
+				break;
+			}
+			if (event.policyVersion === 2) seenPolicy2 = true;
 			const issue = this.transitionIssue({
 				previous: state,
 				event,
@@ -263,6 +269,7 @@ export class ReceiptLedger {
 		const next: ChecklistState = { ...state, revision: state.revision + 1, phase: "completed" };
 		const event: StateEvent = {
 			schema: SCHEMA,
+			policyVersion: 2,
 			eventId: randomUUID(),
 			operation: "complete",
 			actor: "gate",
@@ -279,7 +286,9 @@ export class ReceiptLedger {
 	private stateEvent(entry: BranchEntry): { event?: StateEvent; fault?: string } {
 		const data = this.record(entry.data);
 		if (!data || data.schema !== SCHEMA) return { fault: "unsupported pi-checklist state record" };
-		const state = this.readState(data.state);
+		const policy = data.policyVersion === undefined ? 1 : data.policyVersion;
+		if (policy !== 1 && policy !== 2) return { fault: "unsupported pi-checklist policy version" };
+		const state = this.readState(data.state, policy);
 		if (!state) return { fault: "malformed pi-checklist state snapshot" };
 		if (
 			typeof data.eventId !== "string" ||
@@ -297,6 +306,7 @@ export class ReceiptLedger {
 		return {
 			event: {
 				schema: SCHEMA,
+				policyVersion: policy as 1 | 2,
 				eventId: data.eventId,
 				operation: data.operation as StateEvent["operation"],
 				actor: data.actor as StateEvent["actor"],
@@ -333,7 +343,7 @@ export class ReceiptLedger {
 		};
 	}
 
-	private readState(value: unknown): ChecklistState | null {
+	private readState(value: unknown, policy: 1 | 2 = 1): ChecklistState | null {
 		const state = this.record(value);
 		if (!state) return null;
 		if (
@@ -361,11 +371,14 @@ export class ReceiptLedger {
 			) {
 				return null;
 			}
+			const sourceAnchorId = this.sourceAnchor(task.sourceAnchorId, policy);
+			if (sourceAnchorId === undefined) return null;
 			tasks.push({
 				taskId: task.taskId,
 				title: task.title,
 				status: task.status as TaskStatus,
 				note: typeof task.note === "string" ? task.note : null,
+				sourceAnchorId,
 			});
 		}
 		return {
@@ -376,6 +389,13 @@ export class ReceiptLedger {
 			tasks,
 			holdReason: typeof state.holdReason === "string" ? state.holdReason : null,
 		};
+	}
+
+	/** A recorded prompt source, or undefined when the record is malformed for its policy. */
+	private sourceAnchor(value: unknown, policy: 1 | 2): string | null | undefined {
+		if (value === undefined) return policy >= 2 ? undefined : null;
+		if (value === null) return null;
+		return typeof value === "string" && value.trim() ? value : undefined;
 	}
 
 	private transitionIssue(step: ReplayStep): string | null {
@@ -389,6 +409,10 @@ export class ReceiptLedger {
 		if (state.revision !== previous.revision + 1) return "transition revision does not advance by one";
 		if (state.title !== previous.title) return "checklist title changed";
 		if (!this.allowedActor(event)) return "transition actor is not allowed";
+		if (event.operation === "add") {
+			const sourced = this.sourcedAdditionIssue(step);
+			if (sourced) return sourced;
+		}
 		const taskIssue = this.taskTransitionIssue(previous, state, event);
 		if (taskIssue) return taskIssue;
 		const openIssue = this.openStateIssue(previous, state, event);
@@ -420,7 +444,12 @@ export class ReceiptLedger {
 		}
 		if (previous && previous.checklistId === state.checklistId) return "create reused a checklist identity";
 		if (!event.preReceiptId) return "create transition has no pre_checklist receipt";
-		return this.receiptIssue(step) ?? this.newListIssue(state) ?? this.taskSetIssue(state, 1, MAX_TASKS);
+		return (
+			this.sourcedTasksIssue(step) ??
+			this.receiptIssue(step) ??
+			this.newListIssue(state) ??
+			this.taskSetIssue(state, 1, MAX_TASKS)
+		);
 	}
 
 	/** Rules for the transition that starts a new list over a live one. */
@@ -438,8 +467,13 @@ export class ReceiptLedger {
 			return "replacement does not describe the checklist it replaced";
 		}
 		if (!event.reason?.trim()) return "replacement has no reason";
-		const anchor = this.anchorIssue(step.branch, event.anchorId ?? null, step.index, step.previousIndex);
-		if (anchor) return anchor.message;
+		if ((event.policyVersion ?? 1) === 2) {
+			const sourced = this.sourcedTasksIssue(step);
+			if (sourced) return sourced;
+		} else {
+			const anchor = this.anchorIssue(step.branch, event.anchorId ?? null, step.index, step.previousIndex);
+			if (anchor) return anchor.message;
+		}
 		if (!event.preReceiptId) return "replacement transition has no pre_checklist receipt";
 		return this.receiptIssue(step) ?? this.newListIssue(state) ?? this.taskSetIssue(state, 1, MAX_TASKS);
 	}
@@ -547,6 +581,76 @@ export class ReceiptLedger {
 		return null;
 	}
 
+	/** The anchor an addition must satisfy: the latest user prompt, after the latest revision. */
+	private additionAnchorIssue(
+		branch: readonly BranchEntry[],
+		anchorId: string | null,
+		index: number,
+		previousIndex: number,
+	): { code: string; message: string } | null {
+		const id = (anchorId ?? "").trim();
+		if (!id) {
+			return {
+				code: "ANCHOR_REQUIRED",
+				message: "Checklist additions require anchorId naming the latest user prompt.",
+			};
+		}
+		const latestUserIndex = this.lastIndex(branch.slice(0, index), (entry) => this.isUser(entry));
+		if (latestUserIndex < 0) {
+			return { code: "USER_PROMPT_REQUIRED", message: "Checklist additions require a user prompt on this branch." };
+		}
+		const anchorIndex = branch.findIndex((entry) => entry.id === id);
+		if (anchorIndex < 0 || anchorIndex >= index || !this.isUser(branch[anchorIndex])) {
+			return {
+				code: "ANCHOR_INVALID",
+				message: "anchorId must name a user message preceding this addition on the active branch.",
+			};
+		}
+		if (anchorIndex !== latestUserIndex) {
+			return { code: "ANCHOR_STALE", message: "Checklist additions must cite the latest user prompt on this branch." };
+		}
+		if (anchorIndex <= previousIndex) {
+			return {
+				code: "NEW_USER_PROMPT_REQUIRED",
+				message: "Checklist additions require a new user prompt after the latest checklist revision.",
+			};
+		}
+		return null;
+	}
+
+	/** A replacement or create introduces tasks that each cite the prompt that sourced them. */
+	private sourcedTasksIssue(step: ReplayStep): string | null {
+		if ((step.event.policyVersion ?? 1) !== 2) return null;
+		const anchor = this.additionAnchorIssue(step.branch, step.event.anchorId ?? null, step.index, step.previousIndex);
+		if (anchor) return anchor.message;
+		const expected = (step.event.anchorId ?? "").trim();
+		return step.event.state.tasks.every((task) => task.sourceAnchorId === expected)
+			? null
+			: "a new task does not cite the prompt that sourced it";
+	}
+
+	/** The same rule for the one task an add appends. */
+	private sourcedAdditionIssue(step: ReplayStep): string | null {
+		if ((step.event.policyVersion ?? 1) !== 2) return null;
+		const anchor = this.additionAnchorIssue(step.branch, step.event.anchorId ?? null, step.index, step.previousIndex);
+		if (anchor) return anchor.message;
+		const added = step.event.state.tasks[step.event.state.tasks.length - 1];
+		return added.sourceAnchorId === (step.event.anchorId ?? "").trim()
+			? null
+			: "the added task does not cite the prompt that sourced it";
+	}
+
+	/** The live check an addition shares: a fresh user prompt, cited as its source. */
+	private liveAdditionIssue(
+		view: ChecklistView,
+		branch: readonly BranchEntry[],
+		anchorId: string,
+	): NextTransition | null {
+		const previousIndex = branch.findIndex((entry) => entry.id === view.stateEntryId);
+		const anchor = this.additionAnchorIssue(branch, anchorId, branch.length, previousIndex);
+		return anchor ? this.nextFailure(anchor.code, anchor.message) : null;
+	}
+
 	private allowedActor(event: StateEvent): boolean {
 		if (
 			event.operation === "create" ||
@@ -614,7 +718,12 @@ export class ReceiptLedger {
 	}
 
 	private sameIdentities(left: ChecklistState["tasks"], right: ChecklistState["tasks"]): boolean {
-		return left.every((task, index) => task.taskId === right[index].taskId && task.title === right[index].title);
+		return left.every(
+			(task, index) =>
+				task.taskId === right[index].taskId &&
+				task.title === right[index].title &&
+				task.sourceAnchorId === right[index].sourceAnchorId,
+		);
 	}
 
 	private sameTasks(left: ChecklistState["tasks"], right: ChecklistState["tasks"]): boolean {
@@ -627,7 +736,7 @@ export class ReceiptLedger {
 		branch: readonly BranchEntry[],
 	): NextTransition {
 		if (view.fault) return this.nextFailure("STATE_FAULT", view.fault);
-		if (command.kind === "create") return this.create(command, view);
+		if (command.kind === "create") return this.create(command, view, branch);
 		if (command.kind === "replace") return this.replace(command, view, branch);
 		const state = view.state;
 		if (!state) return this.nextFailure("NO_CHECKLIST", "No checklist is open on this branch.");
@@ -638,23 +747,33 @@ export class ReceiptLedger {
 		if (state.phase !== "open") return this.nextFailure("NOT_OPEN", `Checklist is ${state.phase}.`);
 		const reference = this.referenceIssue(state, command.checklistId, command.revision);
 		if (reference) return this.nextFailure(reference.code, reference.message);
-		if (command.kind === "add") return this.add(command, state);
+		if (command.kind === "add") return this.add(command, state, view, branch);
 		if (command.kind === "removeTask") return this.removeTask(command, state);
 		return this.update(command, state);
 	}
 
-	private create(command: Extract<TransitionCommand, { kind: "create" }>, view: ChecklistView): NextTransition {
+	private create(
+		command: Extract<TransitionCommand, { kind: "create" }>,
+		view: ChecklistView,
+		branch: readonly BranchEntry[],
+	): NextTransition {
 		if (view.state && (view.state.phase === "open" || view.state.phase === "held")) {
 			return this.nextFailure("ALREADY_OPEN", "A checklist is already open on this branch.");
 		}
 		if (!view.acknowledged) return this.nextFailure("PRE_REQUIRED", this.contract.ackDenial());
-		const drafted = this.draftState(command.title, command.tasks);
+		const addition = this.liveAdditionIssue(view, branch, command.anchorId);
+		if (addition) return addition;
+		const drafted = this.draftState(command.title, command.tasks, command.anchorId.trim());
 		if (!drafted.state) return drafted.failure as NextTransition;
 		const preReceiptId = this.freshReceipt(view);
 		if (!preReceiptId) {
 			return this.nextFailure("PRE_REQUIRED", "Call pre_checklist again before starting this checklist.");
 		}
-		return this.mutation(this.event("create", "model", null, drafted.state, preReceiptId));
+		return this.mutation(
+			this.event("create", "model", null, drafted.state, preReceiptId, null, null, {
+				anchorId: command.anchorId.trim(),
+			}),
+		);
 	}
 
 	private replace(
@@ -669,7 +788,7 @@ export class ReceiptLedger {
 		}
 		const refused = this.modelReference(view, branch, command);
 		if (refused) return refused;
-		const drafted = this.draftState(command.title, command.tasks);
+		const drafted = this.draftState(command.title, command.tasks, command.anchorId.trim());
 		if (!drafted.state) return drafted.failure as NextTransition;
 		const preReceiptId = this.freshReceipt(view);
 		if (!preReceiptId) {
@@ -683,18 +802,26 @@ export class ReceiptLedger {
 		);
 	}
 
-	private add(command: Extract<TransitionCommand, { kind: "add" }>, state: ChecklistState): NextTransition {
+	private add(
+		command: Extract<TransitionCommand, { kind: "add" }>,
+		state: ChecklistState,
+		view: ChecklistView,
+		branch: readonly BranchEntry[],
+	): NextTransition {
 		if (state.tasks.length >= MAX_TASKS) {
 			return this.nextFailure("TASK_LIMIT", `A checklist holds at most ${MAX_TASKS} tasks.`);
 		}
 		const title = command.title.trim();
 		if (!title) return this.nextFailure("TITLE_REQUIRED", "A task needs a non-empty title.");
+		const addition = this.liveAdditionIssue(view, branch, command.anchorId);
+		if (addition) return addition;
+		const anchorId = command.anchorId.trim();
 		const next: ChecklistState = {
 			...state,
 			revision: state.revision + 1,
-			tasks: [...state.tasks, { taskId: randomUUID(), title, status: "pending", note: null }],
+			tasks: [...state.tasks, { taskId: randomUUID(), title, status: "pending", note: null, sourceAnchorId: anchorId }],
 		};
-		return this.mutation(this.event("add", "model", state, next, null));
+		return this.mutation(this.event("add", "model", state, next, null, null, null, { anchorId }));
 	}
 
 	private update(command: Extract<TransitionCommand, { kind: "update" }>, state: ChecklistState): NextTransition {
@@ -715,6 +842,7 @@ export class ReceiptLedger {
 					eventId: `revision-${state.checklistId}-${state.revision}`,
 					checklistId: state.checklistId,
 					revision: state.revision,
+					anchorId: null,
 				},
 				state,
 			};
@@ -831,6 +959,7 @@ export class ReceiptLedger {
 	private draftState(
 		title: string,
 		tasks: string[],
+		sourceAnchorId: string,
 	): { state?: ChecklistState; failure?: NextTransition } {
 		if (tasks.length < 1 || tasks.length > MAX_TASKS) {
 			return { failure: this.nextFailure("TASK_LIMIT", `A checklist needs one to ${MAX_TASKS} tasks.`) };
@@ -847,7 +976,13 @@ export class ReceiptLedger {
 				revision: 1,
 				title: heading,
 				phase: "open",
-				tasks: titles.map((value) => ({ taskId: randomUUID(), title: value, status: "pending", note: null })),
+				tasks: titles.map((value) => ({
+					taskId: randomUUID(),
+					title: value,
+					status: "pending",
+					note: null,
+					sourceAnchorId,
+				})),
 				holdReason: null,
 			},
 		};
@@ -885,6 +1020,7 @@ export class ReceiptLedger {
 	): StateEvent {
 		return {
 			schema: SCHEMA,
+			policyVersion: 2,
 			eventId: randomUUID(),
 			operation,
 			actor,
@@ -912,6 +1048,7 @@ export class ReceiptLedger {
 				eventId: event.eventId,
 				checklistId: event.state.checklistId,
 				revision: event.state.revision,
+				anchorId: event.anchorId ?? null,
 			},
 			state: event.state,
 		};
@@ -989,7 +1126,9 @@ export class ReceiptLedger {
 		if (
 			details?.schema === SCHEMA &&
 			details.kind === "pre" &&
-			details.contractVersion === CONTRACT_VERSION &&
+			typeof details.contractVersion === "number" &&
+			details.contractVersion >= 1 &&
+			details.contractVersion <= CONTRACT_VERSION &&
 			typeof details.receiptId === "string"
 		) {
 			return details.receiptId;

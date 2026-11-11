@@ -46,6 +46,7 @@ test("create returns the new list and rejects an eleventh task", async () => {
 	const { pi, ctx } = setup();
 	const created = (await pi.tool("checklist", {
 		action: "create",
+		anchorId: "u1",
 		title: "Work",
 		tasks: ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
 	}, ctx)) as { details: { kind: string; revision: number }; content: Array<{ text: string }> };
@@ -60,6 +61,7 @@ test("create returns the new list and rejects an eleventh task", async () => {
 		action: "add",
 		checklistId: list.checklistId,
 		revision: list.revision,
+		anchorId: "u1",
 		title: "eleven",
 	}, ctx)) as { details: { kind: string; code?: string } };
 	assertEq(add.details.kind, "error");
@@ -68,7 +70,7 @@ test("create returns the new list and rejects an eleventh task", async () => {
 
 test("update requires a completion note and advances revision", async () => {
 	const { pi, ctx } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; revision: number; tasks: Array<{ taskId: string }> } };
 	}).details.state;
@@ -94,7 +96,7 @@ test("update requires a completion note and advances revision", async () => {
 
 test("ack must be the sole tool call in its message", async () => {
 	const { pi, ctx, session } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; revision: number } };
 	}).details.state;
@@ -115,7 +117,7 @@ test("ack must be the sole tool call in its message", async () => {
 
 test("ack after the work succeeds as a sole call", async () => {
 	const { pi, ctx, session } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; revision: number } };
 	}).details.state;
@@ -132,7 +134,7 @@ test("ack after the work succeeds as a sole call", async () => {
 
 test("an ack naming another checklist shows the id it received", async () => {
 	const { pi, ctx, session } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; revision: number } };
 	}).details.state;
@@ -152,7 +154,7 @@ test("an ack naming another checklist shows the id it received", async () => {
 
 test("an ack with a quoted checklist id acknowledges the current list", async () => {
 	const { pi, ctx, session } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; revision: number } };
 	}).details.state;
@@ -176,8 +178,8 @@ test("an ack with a quoted checklist id acknowledges the current list", async ()
 });
 
 test("add and update accept quoted checklist and task ids", async () => {
-	const { pi, ctx } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	const { pi, ctx, session } = setup();
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; revision: number; tasks: Array<{ taskId: string }> } };
 	}).details.state;
@@ -192,10 +194,12 @@ test("add and update accept quoted checklist and task ids", async () => {
 	assertEq(updated.details.kind, "mutation");
 	assertEq(updated.details.checklistId, state.checklistId);
 	assertEq(updated.details.revision, 2);
+	session.add(userEntry("u2", "one more"));
 	const added = (await pi.tool("checklist", {
 		action: "add",
 		checklistId: `"${state.checklistId}"`,
 		revision: 2,
+		anchorId: "u2",
 		title: "two",
 	}, ctx)) as { details: { kind: string; revision: number } };
 	assertEq(added.details.kind, "mutation");
@@ -207,7 +211,7 @@ test("create before pre_checklist is refused by the tool", async () => {
 	const pi = new FakePi(session);
 	const ledger = new ReceiptLedger(pi as never);
 	new ChecklistTool(ledger, new ChecklistContract()).register(pi as never);
-	const result = (await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, new FakeContext(session))) as {
+	const result = (await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, new FakeContext(session))) as {
 		details: { code?: string };
 	};
 	assertEq(result.details.code, "PRE_REQUIRED");
@@ -215,7 +219,7 @@ test("create before pre_checklist is refused by the tool", async () => {
 
 test("a held list refuses model mutations", async () => {
 	const { pi, ctx } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const ledger = new ReceiptLedger(pi as never);
 	ledger.transition({ kind: "hold", reason: "user", actor: "user" }, ctx as never);
 	const state = ((await pi.tool("checklist", { action: "list" }, ctx)) as {
@@ -225,6 +229,7 @@ test("a held list refuses model mutations", async () => {
 		action: "add",
 		checklistId: state.checklistId,
 		revision: state.revision,
+		anchorId: "u1",
 		title: "two",
 	}, ctx)) as { details: { code?: string } };
 	assertEq(result.details.code, "NOT_OPEN");
@@ -254,8 +259,8 @@ test("the registered create schema accepts ten tasks and rejects eleven", () => 
 	assertEq(parameters.properties?.tasks?.type, "array");
 	const ten = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
 	const eleven = [...ten, "k"];
-	assert(Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: ten }));
-	assert(!Value.Check(definition.parameters as never, { action: "create", title: "Work", tasks: eleven }));
+	assert(Value.Check(definition.parameters as never, { action: "create", anchorId: "u1", title: "Work", tasks: ten }));
+	assert(!Value.Check(definition.parameters as never, { action: "create", anchorId: "u1", title: "Work", tasks: eleven }));
 });
 
 test("an undeclared field is named in the refusal", async () => {
@@ -274,9 +279,10 @@ test("an undeclared field is named in the refusal", async () => {
 });
 
 test("a completed task is removed to free a place; an unfinished one is refused", async () => {
-	const { pi, ctx } = setup();
+	const { pi, ctx, session } = setup();
 	await pi.tool("checklist", {
 		action: "create",
+		anchorId: "u1",
 		title: "Work",
 		tasks: ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
 	}, ctx);
@@ -316,10 +322,12 @@ test("a completed task is removed to free a place; an unfinished one is refused"
 	}).details.state;
 	assertEq(after.tasks.length, 9);
 	assert(!after.tasks.some((task) => task.taskId === done.tasks[0].taskId), "the removed record is gone");
+	session.add(userEntry("u2", "add one back"));
 	const readded = (await pi.tool("checklist", {
 		action: "add",
 		checklistId: done.checklistId,
 		revision: after.revision,
+		anchorId: "u2",
 		title: "eleven",
 	}, ctx)) as { details: { kind: string } };
 	assertEq(readded.details.kind, "mutation");
@@ -334,7 +342,7 @@ test("an action name outside the declared set has no schema", () => {
 
 test("create without tasks or title is refused before any state exists", async () => {
 	const { pi, ctx } = setup();
-	const missingTasks = (await pi.tool("checklist", { action: "create", title: "Work" }, ctx)) as {
+	const missingTasks = (await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work" }, ctx)) as {
 		details: { kind: string; code?: string };
 	};
 	assertEq(missingTasks.details.kind, "error");
@@ -353,7 +361,7 @@ test("a stringified task array is refused as invalid arguments", async () => {
 	const { pi, ctx } = setup();
 	const result = (await pi.tool(
 		"checklist",
-		{ action: "create", title: "Work", tasks: '["one","two"]' },
+		{ action: "create", anchorId: "u1", title: "Work", tasks: '["one","two"]' },
 		ctx,
 	)) as { details: { kind: string; code?: string } };
 	assertEq(result.details.code, "INVALID_ARGS");
@@ -373,7 +381,7 @@ test("invalid arguments are refused before the receipt gate", async () => {
 	const pi = new FakePi(session);
 	const ledger = new ReceiptLedger(pi as never);
 	new ChecklistTool(ledger, new ChecklistContract()).register(pi as never);
-	const result = (await pi.tool("checklist", { action: "create", title: "Work" }, new FakeContext(session))) as {
+	const result = (await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work" }, new FakeContext(session))) as {
 		details: { code?: string };
 	};
 	assertEq(result.details.code, "INVALID_ARGS");
@@ -394,7 +402,7 @@ async function list(pi: FakePi, ctx: FakeContext): Promise<{
 
 test("dismiss with a taskId dismisses one task and announces it", async () => {
 	const { pi, ctx, session } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one", "two"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one", "two"] }, ctx);
 	const state = await list(pi, ctx);
 	session.add(userEntry("u2", "priorities changed"));
 	const result = (await pi.tool("checklist", {
@@ -419,7 +427,7 @@ test("dismiss with a taskId dismisses one task and announces it", async () => {
 
 test("dismiss without a taskId dismisses the whole list", async () => {
 	const { pi, ctx, session } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = await list(pi, ctx);
 	session.add(userEntry("u2", "drop it"));
 	const result = (await pi.tool("checklist", {
@@ -437,7 +445,7 @@ test("dismiss without a taskId dismisses the whole list", async () => {
 
 test("a blank taskId is a task dismissal, not a list dismissal", async () => {
 	const { pi, ctx, session } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = await list(pi, ctx);
 	session.add(userEntry("u2", "drop one"));
 	const result = (await pi.tool("checklist", {
@@ -454,7 +462,7 @@ test("a blank taskId is a task dismissal, not a list dismissal", async () => {
 
 test("replace needs a fresh receipt and reports both lists", async () => {
 	const { pi, ctx, session } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = await list(pi, ctx);
 	session.add(userEntry("u2", "do the other thing"));
 	const refused = (await pi.tool("checklist", {
@@ -487,7 +495,7 @@ test("replace needs a fresh receipt and reports both lists", async () => {
 
 test("dismiss and replace refuse a missing reason or anchor", async () => {
 	const { pi, ctx } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = await list(pi, ctx);
 	const noReason = (await pi.tool("checklist", {
 		action: "dismiss",
@@ -510,7 +518,7 @@ test("dismiss and replace refuse a missing reason or anchor", async () => {
 
 test("replace refuses a field the action does not declare", async () => {
 	const { pi, ctx } = setup();
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
 	const state = await list(pi, ctx);
 	const result = (await pi.tool("checklist", {
 		action: "replace",
@@ -523,4 +531,35 @@ test("replace refuses a field the action does not declare", async () => {
 		taskId: state.tasks[0].taskId,
 	}, ctx)) as { details: { code?: string } };
 	assertEq(result.details.code, "INVALID_ARGS");
+});
+
+test("an addition needs the latest user prompt as its anchor", async () => {
+	const { pi, ctx } = setup();
+	const refused = (await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one"] }, ctx)) as {
+		details: { kind: string; code?: string };
+	};
+	assertEq(refused.details.code, "INVALID_ARGS");
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
+	const state = await list(pi, ctx);
+	const add = (await pi.tool("checklist", {
+		action: "add",
+		checklistId: state.checklistId,
+		revision: state.revision,
+		anchorId: "u1",
+		title: "two",
+	}, ctx)) as { details: { code?: string } };
+	assertEq(add.details.code, "NEW_USER_PROMPT_REQUIRED");
+});
+
+test("list exposes the latest user anchor and each task's source", async () => {
+	const { pi, ctx } = setup();
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one"] }, ctx);
+	const view = (await pi.tool("checklist", { action: "list" }, ctx)) as {
+		details: { anchorId: string; state: { tasks: Array<{ sourceAnchorId: string }> } };
+		content: Array<{ text: string }>;
+	};
+	assertEq(view.details.anchorId, "u1");
+	assertEq(view.details.state.tasks[0].sourceAnchorId, "u1");
+	assertIncludes(view.content[0].text, "Latest user message anchorId: u1");
+	assertIncludes(view.content[0].text, "[source: u1]");
 });

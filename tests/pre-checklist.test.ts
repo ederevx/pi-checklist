@@ -29,7 +29,7 @@ test("pre_checklist returns the contract and records a pre receipt", async () =>
 		content: Array<{ text: string }>;
 	};
 	assertEq(result.details.kind, "pre");
-	assertEq(result.details.contractVersion, 1);
+	assertEq(result.details.contractVersion, 2);
 	assert(result.details.receiptId.length > 0, "expected a receipt id");
 	assertIncludes(result.content[0].text, "pi-checklist contract");
 });

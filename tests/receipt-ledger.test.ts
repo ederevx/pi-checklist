@@ -17,13 +17,19 @@ import {
 
 function setup(withPre = true): { session: FakeSession; ledger: ReceiptLedger; ctx: FakeContext } {
 	const session = new FakeSession();
+	session.add(userEntry("user-1"));
 	if (withPre) session.add(preEntry("pre-1"));
 	const pi = new FakePi(session);
 	return { session, ledger: new ReceiptLedger(pi as never), ctx: new FakeContext(session) };
 }
 
-function create(ledger: ReceiptLedger, ctx: FakeContext, tasks = ["one", "two"]): ChecklistDetails {
-	const result = ledger.transition({ kind: "create", title: "Work", tasks, actor: "model" }, ctx as never);
+function create(
+	ledger: ReceiptLedger,
+	ctx: FakeContext,
+	tasks = ["one", "two"],
+	anchorId = "user-1",
+): ChecklistDetails {
+	const result = ledger.transition({ kind: "create", title: "Work", tasks, anchorId, actor: "model" }, ctx as never);
 	return result.details;
 }
 
@@ -42,7 +48,7 @@ test("create builds revision 1 with the requested tasks", () => {
 	assertEq(view.state?.revision, 1);
 	assertEq(view.state?.tasks.length, 2);
 	assertEq(view.state?.phase, "open");
-	assertEq(session.entries.length, 2, "pre receipt plus one state entry");
+	assertEq(session.entries.length, 3, "user prompt, pre receipt, and one state entry");
 });
 
 test("a second create is refused while the list is open", () => {
@@ -63,11 +69,12 @@ test("create refuses zero or eleven tasks", () => {
 });
 
 test("add appends one pending task and advances the revision", () => {
-	const { ledger, ctx } = setup();
+	const { ledger, ctx, session } = setup();
 	create(ledger, ctx);
 	const state = ledger.fromContext(ctx as never).state as ChecklistState;
+	session.add(userEntry("u2", "one more"));
 	const result = ledger.transition(
-		{ kind: "add", checklistId: state.checklistId, revision: state.revision, title: "third", actor: "model" },
+		{ kind: "add", checklistId: state.checklistId, revision: state.revision, title: "third", anchorId: "u2", actor: "model" },
 		ctx as never,
 	);
 	assert(result.ok, "add should succeed");
@@ -83,7 +90,7 @@ test("an eleventh task is refused", () => {
 	create(ledger, ctx, titles);
 	const state = ledger.fromContext(ctx as never).state as ChecklistState;
 	const result = ledger.transition(
-		{ kind: "add", checklistId: state.checklistId, revision: state.revision, title: "k", actor: "model" },
+		{ kind: "add", checklistId: state.checklistId, revision: state.revision, title: "k", anchorId: "user-1", actor: "model" },
 		ctx as never,
 	);
 	if (result.details.kind === "error") assertEq(result.details.code, "TASK_LIMIT");
@@ -152,7 +159,7 @@ test("stale revisions and unknown tasks are refused", () => {
 	create(ledger, ctx);
 	const state = ledger.fromContext(ctx as never).state as ChecklistState;
 	const stale = ledger.transition(
-		{ kind: "add", checklistId: state.checklistId, revision: 99, title: "x", actor: "model" },
+		{ kind: "add", checklistId: state.checklistId, revision: 99, title: "x", anchorId: "user-1", actor: "model" },
 		ctx as never,
 	);
 	if (stale.details.kind === "error") {
@@ -199,7 +206,7 @@ test("hold blocks model mutations until the user releases it", () => {
 	let state = ledger.fromContext(ctx as never).state as ChecklistState;
 	assertEq(state.phase, "held");
 	const blocked = ledger.transition(
-		{ kind: "add", checklistId: state.checklistId, revision: state.revision, title: "x", actor: "model" },
+		{ kind: "add", checklistId: state.checklistId, revision: state.revision, title: "x", anchorId: "user-1", actor: "model" },
 		ctx as never,
 	);
 	if (blocked.details.kind === "error") assertEq(blocked.details.code, "NOT_OPEN");
@@ -233,7 +240,7 @@ test("a malformed canonical record is a visible fault, never an empty list", () 
 	const view = ledger.fromContext(ctx as never);
 	assert(view.fault !== null, "expected a fault");
 	const result = ledger.transition(
-		{ kind: "create", title: "Work", tasks: ["one"], actor: "model" },
+		{ kind: "create", title: "Work", tasks: ["one"], anchorId: "user-1", actor: "model" },
 		ctx as never,
 	);
 	if (result.details.kind === "error") assertEq(result.details.code, "STATE_FAULT");
@@ -297,7 +304,8 @@ test("a completed list can be replaced by a fresh checklist", () => {
 	assert(completion !== undefined, "expected a completion draft");
 	session.add({ type: "custom", id: "complete-1", customType: "pi-checklist-state", data: (completion.draft as { data: unknown }).data });
 	session.add(preEntry("pre-2"));
-	const second = create(ledger, ctx, ["next"]);
+	session.add(userEntry("u2", "start the next list"));
+	const second = create(ledger, ctx, ["next"], "u2");
 	assert(second.kind === "mutation", "a completed predecessor should allow a new list");
 	const after = ledger.fromContext(ctx as never);
 	assertEq(after.fault, null);
@@ -310,7 +318,8 @@ test("a dismissed list can be replaced by a fresh checklist", () => {
 	create(ledger, ctx, ["one"]);
 	ledger.transition({ kind: "dismissList", reason: "abandoned", actor: "user" }, ctx as never);
 	session.add(preEntry("pre-2"));
-	const second = create(ledger, ctx, ["next"]);
+	session.add(userEntry("u2", "start the next list"));
+	const second = create(ledger, ctx, ["next"], "u2");
 	assert(second.kind === "mutation", "a dismissed predecessor should allow a new list");
 	assertEq(ledger.fromContext(ctx as never).fault, null);
 });
@@ -337,11 +346,11 @@ test("a sibling branch's pre receipt cannot start this branch's list", () => {
 	const ledger = new ReceiptLedger(new FakePi(session) as never);
 	const ctx = new FakeContext(session);
 	assertEq(ledger.fromContext(ctx as never).acknowledged, true);
-	const refused = ledger.transition({ kind: "create", title: "Work", tasks: ["one"], actor: "model" }, ctx as never);
+	const refused = ledger.transition({ kind: "create", title: "Work", tasks: ["one"], anchorId: "a1", actor: "model" }, ctx as never);
 	if (refused.details.kind === "error") assertEq(refused.details.code, "PRE_REQUIRED");
 	else throw new Error("expected a branch-local pre refusal");
 	session.add(preEntry("pre-a2"));
-	const created = ledger.transition({ kind: "create", title: "Work", tasks: ["one"], actor: "model" }, ctx as never);
+	const created = ledger.transition({ kind: "create", title: "Work", tasks: ["one"], anchorId: "a1", actor: "model" }, ctx as never);
 	assert(created.ok, "a branch-local receipt should permit creation");
 });
 
@@ -470,7 +479,7 @@ test("a model dismissal needs a reason and a resolvable anchor", () => {
 test("an anchor before the current revision or older than a change is refused", () => {
 	const { ledger, ctx, session } = setup();
 	session.add(userEntry("u0"));
-	create(ledger, ctx);
+	create(ledger, ctx, ["one", "two"], "u0");
 	const state = current(ledger, ctx);
 	const dismiss = (anchorId: string, revision: number) =>
 		ledger.transition(
@@ -912,4 +921,130 @@ test("a replacement receipt cannot be replayed twice", () => {
 	}));
 	const ledger = new ReceiptLedger(new FakePi(session) as never);
 	assertIncludes(String(ledger.fromContext(new FakeContext(session) as never).fault), "consumed receipt");
+});
+
+test("an addition with no user prompt on the branch is refused", () => {
+	const session = new FakeSession();
+	session.add(preEntry("pre-1"));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	const ctx = new FakeContext(session);
+	const blank = ledger.transition(
+		{ kind: "create", title: "Work", tasks: ["one"], anchorId: "  ", actor: "model" },
+		ctx as never,
+	);
+	if (blank.details.kind === "error") assertEq(blank.details.code, "ANCHOR_REQUIRED");
+	else throw new Error("expected an anchor refusal");
+	const absent = ledger.transition(
+		{ kind: "create", title: "Work", tasks: ["one"], anchorId: "nope", actor: "model" },
+		ctx as never,
+	);
+	if (absent.details.kind === "error") assertEq(absent.details.code, "USER_PROMPT_REQUIRED");
+	else throw new Error("expected a user-prompt refusal");
+});
+
+test("an addition must cite the latest user prompt on the branch", () => {
+	const { ledger, ctx, session } = setup();
+	session.add(userEntry("u2", "do it differently"));
+	const stale = create(ledger, ctx, ["one"], "user-1");
+	if (stale.kind === "error") assertEq(stale.code, "ANCHOR_STALE");
+	else throw new Error("expected a stale-anchor refusal");
+	const unknown = create(ledger, ctx, ["one"], "missing");
+	if (unknown.kind === "error") assertEq(unknown.code, "ANCHOR_INVALID");
+	else throw new Error("expected an invalid-anchor refusal");
+});
+
+test("a sourced task records the prompt that asked for it", () => {
+	const { ledger, ctx } = setup();
+	create(ledger, ctx, ["one"]);
+	const state = current(ledger, ctx);
+	assertEq(state.tasks[0].sourceAnchorId, "user-1");
+	assertEq(ledger.fromContext(ctx as never).events.at(-1)?.policyVersion, 2);
+});
+
+test("another addition after checklist work needs a new user prompt", () => {
+	const { ledger, ctx } = setup();
+	create(ledger, ctx, ["one"]);
+	const state = current(ledger, ctx);
+	const refused = ledger.transition(
+		{
+			kind: "add",
+			checklistId: state.checklistId,
+			revision: state.revision,
+			title: "two",
+			anchorId: "user-1",
+			actor: "model",
+		},
+		ctx as never,
+	);
+	if (refused.details.kind === "error") assertEq(refused.details.code, "NEW_USER_PROMPT_REQUIRED");
+	else throw new Error("expected a new-prompt refusal");
+});
+
+test("a current record needs a task source, and a downgrade is a fault", () => {
+	const sourced = (anchorId: string): ChecklistState =>
+		makeState({
+			tasks: [{ taskId: "t1", title: "one", status: "pending", note: null, sourceAnchorId: anchorId }],
+		});
+	const clean = new FakeSession();
+	clean.add(userEntry("u1"), preEntry("pre-1"));
+	clean.add(stateEvent("e1", "create", null, sourced("u1"), { policyVersion: 2, anchorId: "u1" }));
+	const good = new ReceiptLedger(new FakePi(clean) as never);
+	assertEq(good.fromContext(new FakeContext(clean) as never).fault, null);
+	assertEq(good.fromContext(new FakeContext(clean) as never).state?.tasks[0].sourceAnchorId, "u1");
+
+	const sourceless = new FakeSession();
+	sourceless.add(userEntry("u1"), preEntry("pre-1"));
+	sourceless.add(
+		stateEvent(
+			"e1",
+			"create",
+			null,
+			makeState({
+				tasks: [{ taskId: "t1", title: "one", status: "pending", note: null } as never],
+			}),
+			{ policyVersion: 2, anchorId: "u1" },
+		),
+	);
+	const faulted = new ReceiptLedger(new FakePi(sourceless) as never);
+	assertIncludes(String(faulted.fromContext(new FakeContext(sourceless) as never).fault), "malformed");
+
+	const downgraded = new FakeSession();
+	downgraded.add(userEntry("u1"), preEntry("pre-1"));
+	downgraded.add(stateEvent("e1", "create", null, sourced("u1"), { policyVersion: 2, anchorId: "u1" }));
+	downgraded.add(userEntry("u2"));
+	downgraded.add(
+		stateEvent("e2", "update", sourced("u1"), {
+			...sourced("u1"),
+			revision: 2,
+			tasks: [{ taskId: "t1", title: "one", status: "done", note: "ok", sourceAnchorId: "u1" }],
+		}),
+	);
+	const old = new ReceiptLedger(new FakePi(downgraded) as never);
+	assertIncludes(String(old.fromContext(new FakeContext(downgraded) as never).fault), "historical transition follows");
+});
+
+test("a legacy task stays editable and keeps its absent source", () => {
+	const session = new FakeSession();
+	session.add(userEntry("u1"), preEntry("pre-1"));
+	session.add(stateEvent("e1", "create", null, makeState()));
+	const ledger = new ReceiptLedger(new FakePi(session) as never);
+	const ctx = new FakeContext(session);
+	const before = current(ledger, ctx);
+	assertEq(before.tasks[0].sourceAnchorId, null);
+	const done = ledger.transition(
+		{
+			kind: "update",
+			checklistId: before.checklistId,
+			revision: before.revision,
+			taskId: before.tasks[0].taskId,
+			status: "done",
+			note: "kept",
+			actor: "model",
+		},
+		ctx as never,
+	);
+	assert(done.ok, "a legacy task keeps being editable");
+	const after = current(ledger, ctx);
+	assertEq(after.tasks[0].status, "done");
+	assertEq(after.tasks[0].sourceAnchorId, null);
 });

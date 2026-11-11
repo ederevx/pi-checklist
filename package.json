@@ -1,6 +1,6 @@
 {
   "name": "pi-checklist",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Branch-persistent task checklists and bounded settlement enforcement for pi.",
   "type": "module",
   "license": "MIT",

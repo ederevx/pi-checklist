@@ -20,7 +20,7 @@ function setup(hasUI = true): { pi: FakePi; ctx: FakeContext; session: FakeSessi
 }
 
 async function openList(pi: FakePi, ctx: FakeContext): Promise<string> {
-	await pi.tool("checklist", { action: "create", title: "Work", tasks: ["one", "two"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Work", tasks: ["one", "two"] }, ctx);
 	const view = (await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; tasks: Array<{ taskId: string }> } };
 	};

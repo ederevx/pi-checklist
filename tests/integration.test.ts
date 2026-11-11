@@ -47,7 +47,7 @@ test("one multi-step activity runs from pre_checklist to completion", async () =
 	session.add(userEntry("u1"));
 	await pi.tool("pre_checklist", { acknowledge: true }, ctx);
 	session.add(preEntry("pre-1"));
-	await pi.tool("checklist", { action: "create", title: "Ship", tasks: ["build", "test"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Ship", tasks: ["build", "test"] }, ctx);
 	let view = (await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; revision: number; tasks: Array<{ taskId: string }> } };
 	};
@@ -77,7 +77,7 @@ test("one multi-step activity runs from pre_checklist to completion", async () =
 test("an unfinished activity settles unresolved and keeps the list open", async () => {
 	const { pi, ctx, session } = setup();
 	session.add(userEntry("u1"), preEntry("pre-1"));
-	await pi.tool("checklist", { action: "create", title: "Ship", tasks: ["build"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Ship", tasks: ["build"] }, ctx);
 	const first = (await pi.fire("agent_before_settle", boundary(), ctx))[0] as {
 		entries: unknown[];
 		continue?: boolean;
@@ -98,7 +98,7 @@ test("an unfinished activity settles unresolved and keeps the list open", async 
 test("a checklist change forces a fresh acknowledgement", async () => {
 	const { pi, ctx, session } = setup();
 	session.add(userEntry("u1"), preEntry("pre-1"));
-	await pi.tool("checklist", { action: "create", title: "Ship", tasks: ["build"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Ship", tasks: ["build"] }, ctx);
 	let view = (await pi.tool("checklist", { action: "list" }, ctx)) as {
 		details: { state: { checklistId: string; revision: number; tasks: Array<{ taskId: string }> } };
 	};
@@ -110,6 +110,7 @@ test("a checklist change forces a fresh acknowledgement", async () => {
 		customType: "pi-checklist-state",
 		data: {
 			schema: 1,
+			policyVersion: 2,
 			eventId: "e2",
 			operation: "update",
 			actor: "model",
@@ -122,7 +123,7 @@ test("a checklist change forces a fresh acknowledgement", async () => {
 				revision: 2,
 				title: "Ship",
 				phase: "open",
-				tasks: [{ taskId: state.tasks[0].taskId, title: "build", status: "done", note: "ok" }],
+				tasks: [{ taskId: state.tasks[0].taskId, title: "build", status: "done", note: "ok", sourceAnchorId: "u1" }],
 				holdReason: null,
 			},
 		},
@@ -143,7 +144,7 @@ test("a replacement needs its own acknowledgement before the run can settle", as
 	const { pi, ctx, session } = setup();
 	session.add(userEntry("u1"), preEntry("pre-1"));
 	await pi.tool("pre_checklist", { acknowledge: true }, ctx);
-	await pi.tool("checklist", { action: "create", title: "Ship", tasks: ["build"] }, ctx);
+	await pi.tool("checklist", { action: "create", anchorId: "u1", title: "Ship", tasks: ["build"] }, ctx);
 	let view = (await pi.tool("checklist", { action: "list" }, ctx)) as View;
 	await pi.tool("checklist", {
 		action: "update",

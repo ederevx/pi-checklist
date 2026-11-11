@@ -268,8 +268,8 @@ export function makeState(overrides: Partial<ChecklistState> = {}): ChecklistSta
 		title: "Work",
 		phase: "open",
 		tasks: [
-			{ taskId: "task-1", title: "first", status: "pending", note: null },
-			{ taskId: "task-2", title: "second", status: "pending", note: null },
+			{ taskId: "task-1", title: "first", status: "pending", note: null, sourceAnchorId: null },
+			{ taskId: "task-2", title: "second", status: "pending", note: null, sourceAnchorId: null },
 		],
 		holdReason: null,
 		...overrides,

@@ -6,7 +6,7 @@ const contract = new ChecklistContract();
 test("contract catalogue names the tools, limits, and user authority", () => {
 	const text = contract.catalogue(null);
 	assertIncludes(text, "pre_checklist");
-	assertIncludes(text, "one to ten");
+	assertIncludes(text, "at most ten task records");
 	assertIncludes(text, "action ack");
 	assertIncludes(text, "/checklist-hold");
 	assertIncludes(text, "dismiss or");
@@ -14,6 +14,14 @@ test("contract catalogue names the tools, limits, and user authority", () => {
 	assertIncludes(text, "compaction");
 	assertNotIncludes(text, "Current list");
 	assertNotIncludes(text, "Only the user can hold or dismiss");
+});
+
+test("contract catalogue sources every addition from a user prompt", () => {
+	const text = contract.catalogue(null);
+	assertIncludes(text, "Create, add, and replace require anchorId");
+	assertIncludes(text, "another addition requires another user prompt");
+	assertIncludes(text, "never add self-appointed scope");
+	assertIncludes(text, "Removal does not");
 });
 
 test("contract guidelines carry the anchor rule for model dismissals", () => {
@@ -47,7 +55,7 @@ test("describe renders statuses, notes, holds, and acknowledgement freshness", (
 		tasks: [{ taskId: "t", title: "one", status: "done", note: "verified" }],
 	});
 	const text = contract.describe(state, true);
-	assertIncludes(text, "[done] #t one — verified");
+	assertIncludes(text, "[done] #t one [source: legacy] — verified");
 	assertIncludes(text, "Hold: waiting on user");
 	assertIncludes(text, "Acknowledgement: current.");
 });

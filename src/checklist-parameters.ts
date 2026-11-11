@@ -49,8 +49,13 @@ export class ChecklistParameters {
 			anchorId: Type.String({ minLength: 1, maxLength: 100 }),
 		};
 		const actionFields: Record<Action, Record<string, TSchema>> = {
-			create: { title: fields.title, tasks: fields.tasks },
-			add: { checklistId: fields.checklistId, revision: fields.revision, title: fields.title },
+			create: { anchorId: fields.anchorId, title: fields.title, tasks: fields.tasks },
+			add: {
+				checklistId: fields.checklistId,
+				revision: fields.revision,
+				anchorId: fields.anchorId,
+				title: fields.title,
+			},
 			update: {
 				checklistId: fields.checklistId,
 				revision: fields.revision,

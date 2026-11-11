@@ -56,9 +56,9 @@ that work.
 | `checklist ack` | Acknowledge the current revision after reviewing the latest results. Sole tool call in its message. |
 | `checklist list` | Read the branch's current list. |
 
-Mutation parameters carry `checklistId` and the expected `revision`; a stale
-revision is refused and must be re-read with `list`. A field an action does not
-carry is refused by name. Dismissed tasks cannot be
+Mutations of an existing checklist carry `checklistId` and the expected
+`revision`; a stale revision is refused and must be re-read with `list`. A field
+an action does not carry is refused by name. Dismissed tasks cannot be
 changed by the model, and no model action can force a list complete.
 
 `create`, `add`, and `replace` require an `anchorId` naming the latest user
@@ -123,7 +123,7 @@ rebuilt from the active branch on every call, never from a compaction summary.
 A transition written before the addition policy carries no policy version and
 its tasks no source; they render `[source: legacy]`, stay editable and
 completable, and keep that absent source through later snapshots, but they can
-never authorize a new task. A current transition after a historical one is a
+never authorize a new task. A historical transition after a current one is a
 state fault, and so is a current snapshot whose task omits its source.
 Compaction re-injects the current list into model context, and `/tree` restores
 the selected branch's tasks and holds.

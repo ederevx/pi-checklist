@@ -594,6 +594,59 @@ test("a model replacement starts a new list and keeps the displaced one readable
 	assertEq(event?.replacedChecklist?.revision, displaced.revision);
 });
 
+test("a replacement citing a superseded prompt is refused", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	const state = current(ledger, ctx);
+	laterTurn(session, "u2");
+	laterTurn(session, "u3");
+	session.add(preEntry("pre-2"));
+	const before = ledger.fromContext(ctx as never).events.length;
+	const result = ledger.transition(
+		{
+			kind: "replace",
+			checklistId: state.checklistId,
+			revision: state.revision,
+			title: "Next",
+			tasks: ["read"],
+			reason: "priorities changed",
+			anchorId: "u2",
+			actor: "model",
+		},
+		ctx as never,
+	);
+	if (result.details.kind === "error") assertEq(result.details.code, "ANCHOR_STALE");
+	else throw new Error("expected a stale-anchor refusal");
+	const view = ledger.fromContext(ctx as never);
+	assertEq(view.fault, null, "a refusal cannot write a state replay rejects");
+	assertEq(view.events.length, before, "a refusal appends no event");
+	assertEq(view.state?.checklistId, state.checklistId, "the refused replacement leaves the list in place");
+});
+
+test("a replacement needs a prompt the checklist has not consumed", () => {
+	const { ledger, ctx, session } = setup();
+	create(ledger, ctx);
+	const state = current(ledger, ctx);
+	session.add(preEntry("pre-2"));
+	const before = ledger.fromContext(ctx as never).events.length;
+	const result = ledger.transition(
+		{
+			kind: "replace",
+			checklistId: state.checklistId,
+			revision: state.revision,
+			title: "Next",
+			tasks: ["read"],
+			reason: "priorities changed",
+			anchorId: "user-1",
+			actor: "model",
+		},
+		ctx as never,
+	);
+	if (result.details.kind === "error") assertEq(result.details.code, "NEW_USER_PROMPT_REQUIRED");
+	else throw new Error("expected a consumed-prompt refusal");
+	assertEq(ledger.fromContext(ctx as never).events.length, before, "a refusal appends no event");
+});
+
 test("a replacement without a fresh receipt is refused", () => {
 	const { ledger, ctx, session } = setup();
 	create(ledger, ctx);

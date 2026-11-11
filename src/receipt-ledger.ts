@@ -786,6 +786,8 @@ export class ReceiptLedger {
 		if (state.phase !== "open" && state.phase !== "held") {
 			return this.nextFailure("NOT_OPEN", `Checklist is ${state.phase}.`);
 		}
+		const addition = this.liveAdditionIssue(view, branch, command.anchorId);
+		if (addition) return addition;
 		const refused = this.modelReference(view, branch, command);
 		if (refused) return refused;
 		const drafted = this.draftState(command.title, command.tasks, command.anchorId.trim());

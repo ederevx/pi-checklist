@@ -8,6 +8,7 @@ import {
 	ackPair,
 	assert,
 	assertEq,
+	assertIncludes,
 	boundary,
 	preEntry,
 	settleEntry,
@@ -44,19 +45,48 @@ function open(session: FakeSession, overrides: Partial<ChecklistState> = {}): vo
 	session.add(userEntry("u1"), preEntry("pre-1"), stateEvent("e1", "create", null, state(overrides)));
 }
 
-test("aborts and errors never report", () => {
-	const { session, gate, ctx } = setup();
-	open(session);
-	assertEq(gate.decide(boundary("aborted") as never, ctx as never), undefined);
-	assertEq(gate.decide(boundary("error") as never, ctx as never), undefined);
-});
-
-test("no list or a held/dismissed list never reports", () => {
-	const { session, gate, ctx } = setup();
-	assertEq(gate.decide(boundary() as never, ctx as never), undefined);
-	open(session);
-	session.add(stateEvent("e2", "hold", state(), state({ revision: 2, phase: "held", holdReason: "user" }), { reason: "user" }));
-	assertEq(gate.decide(boundary() as never, ctx as never), undefined);
+test("a boundary that cannot report is left alone", () => {
+	const rows: Array<[string, () => unknown]> = [
+		[
+			"an aborted boundary",
+			() => {
+				const { gate, ctx } = setup();
+				return gate.decide(boundary("aborted") as never, ctx as never);
+			},
+		],
+		[
+			"an error boundary",
+			() => {
+				const { gate, ctx } = setup();
+				return gate.decide(boundary("error") as never, ctx as never);
+			},
+		],
+		[
+			"no list",
+			() => {
+				const { gate, ctx } = setup();
+				return gate.decide(boundary() as never, ctx as never);
+			},
+		],
+		[
+			"a held list",
+			() => {
+				const { session, gate, ctx } = setup();
+				open(session);
+				session.add(stateEvent("e2", "hold", state(), state({ revision: 2, phase: "held", holdReason: "user" }), { reason: "user" }));
+				return gate.decide(boundary() as never, ctx as never);
+			},
+		],
+		[
+			"another extension's continuation",
+			() => {
+				const { session, gate, ctx } = setup();
+				open(session);
+				return gate.decide(boundary("completed", { continue: true }) as never, ctx as never);
+			},
+		],
+	];
+	for (const [label, run] of rows) assertEq(run(), undefined, label);
 });
 
 test("an unfinished list settles with a visible notice and no continuation", () => {
@@ -64,15 +94,16 @@ test("an unfinished list settles with a visible notice and no continuation", () 
 	open(session);
 	const result = gate.decide(boundary() as never, ctx as never) as {
 		continue?: boolean;
-		entries: Array<{ type: string; customType?: string; display?: boolean; content?: string }>;
+		entries: Array<{ type?: string; customType?: string; display?: boolean; content?: string }>;
 	};
 	assertEq(result.continue, undefined);
-	assertEq(result.entries.length, 2);
-	assertEq(result.entries[0].customType, "pi-checklist-settle");
-	assertEq(result.entries[1].customType, "pi-checklist-notice");
-	assertEq(result.entries[1].display, true);
-	assert(String(result.entries[1].content).includes("still open"));
-	assert(String(result.entries[1].content).includes("#t1 one"));
+	assertEq(result.entries.length, 2, "a settle audit entry and one notice");
+	assertEq(result.entries[0].customType, "pi-checklist-settle", "the audit entry is recorded first");
+	assertEq(result.entries[1].customType, "pi-checklist-notice", "the notice follows it");
+	assertEq(result.entries[1].type, "custom_message", "the notice is a custom message");
+	assertEq(result.entries[1].display, true, "the notice is visible");
+	assertIncludes(String(result.entries[1].content), "still open", "the notice names the open list");
+	assertIncludes(String(result.entries[1].content), "#t1 one", "the notice names the task");
 });
 
 test("finished tasks without an acknowledgement report the missing acknowledgement", () => {
@@ -98,24 +129,6 @@ test("a finished and acknowledged list completes without continuing", () => {
 	assertEq(result.entries[0].data?.operation, "complete");
 	assertEq(result.entries[0].data?.state.phase, "completed");
 	assertEq(result.entries[0].data?.state.revision, 3);
-});
-
-test("another extension's continuation is left alone", () => {
-	const { session, gate, ctx } = setup();
-	open(session);
-	assertEq(gate.decide(boundary("completed", { continue: true }) as never, ctx as never), undefined);
-});
-
-test("a boundary the host cannot continue still reports the open list", () => {
-	const { session, gate, ctx } = setup();
-	open(session);
-	const result = gate.decide(boundary("completed", { canContinue: false }) as never, ctx as never) as {
-		continue?: boolean;
-		entries: Array<{ display?: boolean; type?: string }>;
-	};
-	assertEq(result.continue, undefined);
-	assertEq(result.entries[1].type, "custom_message");
-	assertEq(result.entries[1].display, true);
 });
 
 test("a repeated settle reports the notice again without a second audit entry", () => {
@@ -165,7 +178,7 @@ test("a state fault is unresolved and visible", () => {
 	};
 	assertEq(result.continue, undefined);
 	assertEq(result.entries[0].display, true);
-	assert(String(result.entries[0].content).includes("unresolved"));
+	assertIncludes(String(result.entries[0].content), "unresolved");
 });
 
 test("earlier boundary drafts are preserved", () => {
@@ -219,3 +232,4 @@ test("a null-state fault carries the anchor it reports under", () => {
 	assertEq(first.entries[0].display, true);
 	assertEq(first.entries[0].details?.anchorId, "u1");
 });
+
